@@ -1,0 +1,538 @@
+{
+  "datasets": [
+    {
+      "name": "portfolio_overview",
+      "displayName": "Portfolio Overview",
+      "queryLines": [
+        "SELECT * FROM mp_catalog.analytics.aibi_portfolio_overview"
+      ]
+    },
+    {
+      "name": "risk_distribution",
+      "displayName": "Risk Distribution",
+      "queryLines": [
+        "SELECT ",
+        "  risk_category, ",
+        "  num_stocks, ",
+        "  ROUND(total_earnings, 2) as total_earnings, ",
+        "  ROUND(avg_growth_rate, 2) as avg_growth_rate, ",
+        "  ROUND(num_stocks * 100.0 / SUM(num_stocks) OVER(), 1) as pct_of_portfolio, ",
+        "  CONCAT(risk_category, ': ', CAST(num_stocks AS STRING), ' stocks (', CAST(ROUND(num_stocks * 100.0 / SUM(num_stocks) OVER(), 1) AS STRING), '%)') as risk_label ",
+        "FROM mp_catalog.analytics.aibi_risk_distribution"
+      ]
+    },
+    {
+      "name": "action_distribution",
+      "displayName": "Action Distribution",
+      "queryLines": [
+        "SELECT ",
+        "  recommendation, ",
+        "  num_stocks, ",
+        "  ROUND(current_earnings_impact, 2) as current_earnings_impact, ",
+        "  ROUND(avg_expected_growth, 2) as avg_expected_growth, ",
+        "  ROUND(num_stocks * 100.0 / SUM(num_stocks) OVER(), 1) as pct_of_portfolio, ",
+        "  CONCAT(recommendation, ': ', CAST(num_stocks AS STRING), ' stocks (', CAST(ROUND(num_stocks * 100.0 / SUM(num_stocks) OVER(), 1) AS STRING), '%)') as action_label ",
+        "FROM mp_catalog.analytics.aibi_action_distribution"
+      ]
+    },
+    {
+      "name": "stock_performance",
+      "displayName": "Stock Performance",
+      "queryLines": [
+        "SELECT * FROM mp_catalog.analytics.aibi_stock_performance"
+      ]
+    },
+    {
+      "name": "portfolio_summary",
+      "displayName": "Portfolio Summary",
+      "queryLines": [
+        "SELECT * FROM mp_catalog.analytics.my_portfolio_summary"
+      ]
+    },
+    {
+      "name": "stock_rankings",
+      "displayName": "Stock Rankings",
+      "queryLines": [
+        "SELECT * FROM mp_catalog.analytics.my_stock_rankings ",
+        "ORDER BY performance_score DESC ",
+        "LIMIT 15"
+      ]
+    },
+    {
+      "name": "action_items",
+      "displayName": "Action Items",
+      "queryLines": [
+        "SELECT * FROM mp_catalog.analytics.my_action_items"
+      ]
+    },
+    {
+      "name": "top_earnings",
+      "displayName": "Top Earnings Stocks",
+      "queryLines": [
+        "SELECT symbol, ",
+        "  ROUND(my_current_annual_earnings, 2) as current_earnings, ",
+        "  ROUND(my_projected_annual_earnings, 2) as projected_earnings ",
+        "FROM mp_catalog.analytics.my_portfolio_dashboard ",
+        "WHERE my_current_annual_earnings IS NOT NULL ",
+        "ORDER BY my_current_annual_earnings DESC ",
+        "LIMIT 10"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Portfolio Overview",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "title",
+            "multilineTextboxSpec": {
+              "lines": ["## 📊 Personal Investment Portfolio Dashboard"]
+            }
+          },
+          "position": {"x": 0, "y": 0, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "subtitle",
+            "multilineTextboxSpec": {
+              "lines": ["Powered by Lakehouse Federation + FactSet Financial Data"]
+            }
+          },
+          "position": {"x": 0, "y": 1, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "total-holdings",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "portfolio_summary",
+                "fields": [{"name": "total_holdings", "expression": "`total_holdings`"}],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {"fieldName": "total_holdings", "displayName": "Holdings"}
+              },
+              "frame": {"title": "Total Holdings", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "current-earnings",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "portfolio_summary",
+                "fields": [{"name": "total_current_earnings", "expression": "`total_current_earnings`"}],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {"fieldName": "total_current_earnings", "displayName": "Current ($)"}
+              },
+              "frame": {"title": "Current Annual Earnings", "showTitle": true}
+            }
+          },
+          "position": {"x": 2, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "projected-earnings",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "portfolio_summary",
+                "fields": [{"name": "total_projected_earnings", "expression": "`total_projected_earnings`"}],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {"fieldName": "total_projected_earnings", "displayName": "Projected ($)"}
+              },
+              "frame": {"title": "Projected Annual Earnings", "showTitle": true}
+            }
+          },
+          "position": {"x": 4, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "section-distribution",
+            "multilineTextboxSpec": {
+              "lines": ["### Risk & Recommendations Distribution"]
+            }
+          },
+          "position": {"x": 0, "y": 5, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "risk-pie",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "risk_distribution",
+                "fields": [
+                  {"name": "risk_category", "expression": "`risk_category`"},
+                  {"name": "num_stocks", "expression": "`num_stocks`"},
+                  {"name": "pct_of_portfolio", "expression": "`pct_of_portfolio`"},
+                  {"name": "total_earnings", "expression": "`total_earnings`"},
+                  {"name": "avg_growth_rate", "expression": "`avg_growth_rate`"},
+                  {"name": "risk_label", "expression": "`risk_label`"}
+                ],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {"fieldName": "num_stocks", "displayName": "Number of Stocks"},
+                "color": {"fieldName": "risk_category", "scale": {"type": "categorical"}, "displayName": "Risk Level"},
+                "detail": [
+                  {"fieldName": "pct_of_portfolio", "displayName": "% of Portfolio"},
+                  {"fieldName": "total_earnings", "displayName": "Total Earnings ($)"},
+                  {"fieldName": "avg_growth_rate", "displayName": "Avg Growth Rate (%)"}
+                ]
+              },
+              "frame": {"title": "Risk Distribution", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 6, "width": 3, "height": 5}
+        },
+        {
+          "widget": {
+            "name": "action-pie",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "action_distribution",
+                "fields": [
+                  {"name": "recommendation", "expression": "`recommendation`"},
+                  {"name": "num_stocks", "expression": "`num_stocks`"},
+                  {"name": "pct_of_portfolio", "expression": "`pct_of_portfolio`"},
+                  {"name": "current_earnings_impact", "expression": "`current_earnings_impact`"},
+                  {"name": "avg_expected_growth", "expression": "`avg_expected_growth`"},
+                  {"name": "action_label", "expression": "`action_label`"}
+                ],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {"fieldName": "num_stocks", "displayName": "Number of Stocks"},
+                "color": {"fieldName": "recommendation", "scale": {"type": "categorical"}, "displayName": "Action"},
+                "detail": [
+                  {"fieldName": "pct_of_portfolio", "displayName": "% of Portfolio"},
+                  {"fieldName": "current_earnings_impact", "displayName": "Earnings Impact ($)"},
+                  {"fieldName": "avg_expected_growth", "displayName": "Avg Expected Growth (%)"}
+                ]
+              },
+              "frame": {"title": "Investment Recommendations", "showTitle": true}
+            }
+          },
+          "position": {"x": 3, "y": 6, "width": 3, "height": 5}
+        },
+        {
+          "widget": {
+            "name": "section-top",
+            "multilineTextboxSpec": {
+              "lines": ["### Top Performing Stocks"]
+            }
+          },
+          "position": {"x": 0, "y": 11, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "earnings-comparison-bar",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "top_earnings",
+                "fields": [
+                  {"name": "symbol", "expression": "`symbol`"},
+                  {"name": "current_earnings", "expression": "`current_earnings`"},
+                  {"name": "projected_earnings", "expression": "`projected_earnings`"}
+                ],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {"fieldName": "symbol", "scale": {"type": "categorical"}, "displayName": "Stock"},
+                "y": {
+                  "scale": {"type": "quantitative"},
+                  "fields": [
+                    {"fieldName": "current_earnings", "displayName": "Current Earnings ($)"},
+                    {"fieldName": "projected_earnings", "displayName": "Projected Earnings ($)"}
+                  ]
+                }
+              },
+              "mark": {"layout": "group"},
+              "frame": {"title": "Top 10 Stocks: Current vs Projected Earnings", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 12, "width": 6, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "section-rankings",
+            "multilineTextboxSpec": {
+              "lines": ["### Stock Performance Rankings"]
+            }
+          },
+          "position": {"x": 0, "y": 18, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "rankings-bar",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "stock_rankings",
+                "fields": [
+                  {"name": "symbol", "expression": "`symbol`"},
+                  {"name": "performance_score", "expression": "`performance_score`"}
+                ],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {"fieldName": "symbol", "scale": {"type": "categorical"}, "displayName": "Stock"},
+                "y": {"fieldName": "performance_score", "scale": {"type": "quantitative"}, "displayName": "Performance Score (0-100)"}
+              },
+              "frame": {"title": "Top 15 Stocks by Performance Score", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 19, "width": 6, "height": 5}
+        }
+      ]
+    },
+    {
+      "name": "action_items",
+      "displayName": "Action Items",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "action-title",
+            "multilineTextboxSpec": {
+              "lines": ["## 🎯 Priority Action Items"]
+            }
+          },
+          "position": {"x": 0, "y": 0, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "action-subtitle",
+            "multilineTextboxSpec": {
+              "lines": ["Stocks requiring immediate attention based on risk and opportunity signals"]
+            }
+          },
+          "position": {"x": 0, "y": 1, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "high-risk-count",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "portfolio_summary",
+                "fields": [{"name": "high_risk_stocks", "expression": "`high_risk_stocks`"}],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {"fieldName": "high_risk_stocks", "displayName": "High Risk"}
+              },
+              "frame": {"title": "🔴 High Risk Stocks", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "sell-count",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "portfolio_summary",
+                "fields": [{"name": "stocks_to_sell", "expression": "`stocks_to_sell`"}],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {"fieldName": "stocks_to_sell", "displayName": "Sell"}
+              },
+              "frame": {"title": "❌ Stocks to Sell", "showTitle": true}
+            }
+          },
+          "position": {"x": 2, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "buy-count",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "portfolio_summary",
+                "fields": [{"name": "buying_opportunities", "expression": "`buying_opportunities`"}],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {"fieldName": "buying_opportunities", "displayName": "Buy"}
+              },
+              "frame": {"title": "💰 Buying Opportunities", "showTitle": true}
+            }
+          },
+          "position": {"x": 4, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "section-urgent",
+            "multilineTextboxSpec": {
+              "lines": ["### Prioritized Action List"]
+            }
+          },
+          "position": {"x": 0, "y": 5, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "action-table",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "action_items",
+                "fields": [
+                  {"name": "symbol", "expression": "`symbol`"},
+                  {"name": "shares_held", "expression": "`shares_held`"},
+                  {"name": "my_current_annual_earnings", "expression": "`my_current_annual_earnings`"},
+                  {"name": "projected_eps_growth_pct", "expression": "`projected_eps_growth_pct`"},
+                  {"name": "profit_margin_pct", "expression": "`profit_margin_pct`"},
+                  {"name": "debt_to_equity_ratio", "expression": "`debt_to_equity_ratio`"},
+                  {"name": "risk_assessment", "expression": "`risk_assessment`"},
+                  {"name": "action_recommendation", "expression": "`action_recommendation`"},
+                  {"name": "priority_action", "expression": "`priority_action`"}
+                ],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {"fieldName": "priority_action", "displayName": "Priority"},
+                  {"fieldName": "symbol", "displayName": "Symbol"},
+                  {"fieldName": "shares_held", "displayName": "Shares"},
+                  {"fieldName": "my_current_annual_earnings", "displayName": "Current Earnings ($)"},
+                  {"fieldName": "projected_eps_growth_pct", "displayName": "Growth (%)"},
+                  {"fieldName": "profit_margin_pct", "displayName": "Margin (%)"},
+                  {"fieldName": "debt_to_equity_ratio", "displayName": "D/E Ratio"},
+                  {"fieldName": "risk_assessment", "displayName": "Risk"},
+                  {"fieldName": "action_recommendation", "displayName": "Action"}
+                ]
+              },
+              "frame": {"title": "Stocks Requiring Action", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 6, "width": 6, "height": 10}
+        }
+      ]
+    },
+    {
+      "name": "detailed_holdings",
+      "displayName": "All Holdings",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "holdings-title",
+            "multilineTextboxSpec": {
+              "lines": ["## 📋 Complete Holdings Analysis"]
+            }
+          },
+          "position": {"x": 0, "y": 0, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "holdings-subtitle",
+            "multilineTextboxSpec": {
+              "lines": ["Full portfolio with financial metrics, risk assessment, and recommendations"]
+            }
+          },
+          "position": {"x": 0, "y": 1, "width": 6, "height": 1}
+        },
+        {
+          "widget": {
+            "name": "performance-table",
+            "queries": [{
+              "name": "main_query",
+              "query": {
+                "datasetName": "stock_performance",
+                "fields": [
+                  {"name": "symbol", "expression": "`symbol`"},
+                  {"name": "shares_held", "expression": "`shares_held`"},
+                  {"name": "my_current_annual_earnings", "expression": "`my_current_annual_earnings`"},
+                  {"name": "my_projected_annual_earnings", "expression": "`my_projected_annual_earnings`"},
+                  {"name": "projected_eps_growth_pct", "expression": "`projected_eps_growth_pct`"},
+                  {"name": "profit_margin_pct", "expression": "`profit_margin_pct`"},
+                  {"name": "performance_tier", "expression": "`performance_tier`"}
+                ],
+                "disaggregated": true
+              }
+            }],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {"fieldName": "symbol", "displayName": "Symbol"},
+                  {"fieldName": "shares_held", "displayName": "Shares Held"},
+                  {"fieldName": "my_current_annual_earnings", "displayName": "Current Earnings ($)"},
+                  {"fieldName": "my_projected_annual_earnings", "displayName": "Projected Earnings ($)"},
+                  {"fieldName": "projected_eps_growth_pct", "displayName": "EPS Growth (%)"},
+                  {"fieldName": "profit_margin_pct", "displayName": "Profit Margin (%)"},
+                  {"fieldName": "performance_tier", "displayName": "Performance Tier"}
+                ]
+              },
+              "frame": {"title": "All Holdings with Performance Metrics", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 2, "width": 6, "height": 12}
+        }
+      ]
+    }
+  ]
+}
+
