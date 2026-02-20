@@ -46,51 +46,26 @@ Portfolio (ticker)  →  Symbology (ticker → ID)  →  FactSet Data (ID)
    - Investment decision support examples
    - **Use this for technical demos and blog content**
 
-2. **`lakehouse_federation_demo.py`**
-   - General-purpose federation demo
-   - Assumes direct ticker-to-ticker joins (simplified)
-   - Good for understanding federation basics
-   - **Use this for general federation concepts**
+### Setup Guide
 
-3. **`blog_demo_simple.py`**
-   - Streamlined version for quick demos
-   - Simplified for blog posts
-   - Clean narrative flow
-   - **Use this for executive/high-level presentations**
-
-### Setup Scripts
-
-4. **`onprem_portfolio_setup.sql`** ⭐ **RUN THIS FIRST**
-   - Creates sample portfolio database
-   - Realistic customer holdings data
-   - Run in your on-premise SQL Server or Azure SQL
-   - **Required for all demos**
-
-5. **`azure_sql_setup.sql`**
-   - Alternative setup script
-   - Generic customer holdings structure
-   - Use if you need a simpler schema
+2. ** SETUP GUIDE **
+   - setup guide
+   - Includes instructions to setup connectivity to on-prem azure sql database
 
 ### Reference Documents
 
-6. **`FACTSET_QUICK_REFERENCE.md`** ⭐ **KEY REFERENCE**
+3. **`FACTSET_QUICK_REFERENCE.md`** ⭐ **KEY REFERENCE**
    - FactSet-specific join patterns
    - Symbology table usage
    - Common query patterns
    - Troubleshooting guide
    - **Keep this handy during development**
 
-7. **`QUICK_REFERENCE.md`**
+4. **`QUICK_REFERENCE.md`**
    - General federation commands
    - Connection setup
    - Performance optimization
    - Common troubleshooting
-
-8. **`SETUP_GUIDE.md`**
-   - Step-by-step setup instructions
-   - Prerequisites and requirements
-   - Architecture diagrams
-   - Best practices
 
 ---
 
