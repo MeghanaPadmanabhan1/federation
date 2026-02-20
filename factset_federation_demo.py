@@ -1,16 +1,17 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Lakehouse Federation with FactSet Data
-# MAGIC
-# MAGIC ## Real-World Use Case: Portfolio Analysis Without Data Migration
+# MAGIC # Personal Investment Portfolio Dashboard
+# MAGIC ## Powered by Lakehouse Federation + FactSet Financial Data
 # MAGIC
 # MAGIC **The Challenge:**
-# MAGIC - Customer has a portfolio stored in an **on-premise SQL database** (ticker symbols, shares held)
-# MAGIC - Wants to analyze portfolio using **FactSet financial data** from Databricks Marketplace
-# MAGIC - Cannot move sensitive portfolio data to the cloud due to security/compliance requirements
+# MAGIC - Individual investor maintains equity portfolio in an **on-premise SQL database**
+# MAGIC - Wants comprehensive financial analysis using **FactSet institutional-grade data**
+# MAGIC - Cannot move sensitive portfolio data to the cloud due to security/privacy requirements
 # MAGIC
 # MAGIC **The Solution:**
-# MAGIC Use Lakehouse Federation to query on-premise data **in place** and join with FactSet data for unified analytics.
+# MAGIC - Use Lakehouse Federation to query on-premise holdings **in place**
+# MAGIC - Enrich with FactSet fundamentals, estimates, and analyst consensus
+# MAGIC - Generate actionable investment insights and risk assessments
 
 # COMMAND ----------
 
@@ -72,7 +73,9 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Set Up Federation to On-Premise Portfolio Database
+# MAGIC ## Step 3: Federation Connection
+# MAGIC
+# MAGIC The on-premise portfolio is already federated as **mp_portfolio_federated** catalog.
 
 # COMMAND ----------
 
@@ -91,39 +94,41 @@
 
 # MAGIC %sql
 # MAGIC -- Create foreign catalog for on-premise portfolio database
-# MAGIC CREATE CATALOG IF NOT EXISTS portfolio_federated
-# MAGIC USING CONNECTION onprem_sql_connection
+# MAGIC CREATE FOREIGN CATALOG IF NOT EXISTS mp_portfolio_federated
+# MAGIC USING CONNECTION azure_sql_federation
 # MAGIC OPTIONS (
-# MAGIC   database 'PortfolioDB'
+# MAGIC   database 'oneenvsqldb'
 # MAGIC );
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Verify we can see the schemas
-# MAGIC SHOW SCHEMAS IN portfolio_federated;
+# MAGIC -- Verify connection to federated portfolio
+# MAGIC SHOW SCHEMAS IN mp_portfolio_federated;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 4: Query Federated Portfolio Data (Stays On-Premise!)
+# MAGIC ## Step 4: View Your Portfolio Holdings
+# MAGIC
+# MAGIC **Schema:** `mp_portfolio_federated.dbo.equity_holdings`
+# MAGIC - `instrument_type`: Type of security (equity, etc.)
+# MAGIC - `symbol`: Ticker symbol
+# MAGIC - `number_of_shares`: Shares held
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Customer's portfolio data (queried from on-premise database)
-# MAGIC -- This data NEVER leaves the on-premise SQL server
+# MAGIC -- Your personal equity holdings (queried from on-premise database)
+# MAGIC -- This data NEVER leaves your on-premise SQL server
 # MAGIC
 # MAGIC SELECT
-# MAGIC   customer_id,
-# MAGIC   ticker_symbol,
-# MAGIC   shares_held,
-# MAGIC   cost_basis,
-# MAGIC   purchase_date,
-# MAGIC   account_type
-# MAGIC FROM portfolio_federated.dbo.customer_holdings
-# MAGIC ORDER BY shares_held * cost_basis DESC
-# MAGIC LIMIT 10;
+# MAGIC   instrument_type,
+# MAGIC   symbol,
+# MAGIC   number_of_shares
+# MAGIC FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC WHERE instrument_type = 'Equity'
+# MAGIC ORDER BY number_of_shares DESC;
 
 # COMMAND ----------
 
@@ -140,65 +145,97 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Complete query: Portfolio + FactSet Fundamentals
-# MAGIC -- Shows how to enrich portfolio holdings with financial data
+# MAGIC -- Quick test: See if portfolio tickers now match FactSet
+# MAGIC WITH my_portfolio AS (
+# MAGIC   SELECT 
+# MAGIC     symbol,
+# MAGIC     UPPER(CONCAT(symbol, '-US')) AS ticker_region
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE instrument_type = 'Equity'
+# MAGIC   LIMIT 5
+# MAGIC )
+# MAGIC SELECT 
+# MAGIC   p.symbol,
+# MAGIC   p.ticker_region,
+# MAGIC   s.fsym_id,
+# MAGIC   CASE 
+# MAGIC     WHEN s.fsym_id IS NOT NULL THEN '✅ FOUND' 
+# MAGIC     ELSE '❌ NOT FOUND' 
+# MAGIC   END AS status
+# MAGIC FROM my_portfolio p
+# MAGIC LEFT JOIN mp_factset_data.sym_v1.sym_ticker_region s
+# MAGIC   ON p.ticker_region = s.ticker_region;
+# MAGIC
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 12
+# MAGIC %sql
+# MAGIC -- Portfolio enriched with FactSet Fundamentals
+# MAGIC -- Combines your holdings with institutional-grade financial data
 # MAGIC
 # MAGIC WITH portfolio AS (
 # MAGIC   SELECT
-# MAGIC     customer_id,
-# MAGIC     ticker_symbol,
-# MAGIC     CONCAT(ticker_symbol, '-US') AS ticker_region,  -- Convert to FactSet format
-# MAGIC     shares_held,
-# MAGIC     cost_basis,
-# MAGIC     shares_held * cost_basis AS position_value,
-# MAGIC     purchase_date
-# MAGIC   FROM portfolio_federated.dbo.customer_holdings
+# MAGIC     symbol,
+# MAGIC     UPPER(symbol) AS ticker_region ,  -- Convert to FactSet format with UPPER case
+# MAGIC     number_of_shares AS shares_held,
+# MAGIC     instrument_type
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE instrument_type = 'Equity'
 # MAGIC ),
 # MAGIC fundamentals_data AS (
 # MAGIC   SELECT
 # MAGIC     a.ticker_region,
 # MAGIC     c.fsym_id,
-# MAGIC     c.ff_date AS fiscal_date,
-# MAGIC     c.ff_sales AS revenue,
-# MAGIC     c.ff_net_inc AS net_income,
-# MAGIC     c.ff_eps_basic AS eps,
-# MAGIC     c.ff_assets AS total_assets,
-# MAGIC     c.ff_com_eq AS shareholders_equity,
-# MAGIC     c.ff_oper_cf AS operating_cash_flow,
-# MAGIC     c.ff_debt_st AS short_term_debt,
-# MAGIC     c.ff_debt_lt AS long_term_debt,
-# MAGIC     ROUND(c.ff_net_inc / NULLIF(c.ff_sales, 0) * 100, 2) AS profit_margin_pct,
-# MAGIC     ROUND(c.ff_com_eq / NULLIF(c.ff_assets, 0) * 100, 2) AS equity_ratio_pct,
-# MAGIC     ROUND((c.ff_debt_st + c.ff_debt_lt) / NULLIF(c.ff_com_eq, 0), 2) AS debt_to_equity
+# MAGIC     c.DATE AS fiscal_date,
+# MAGIC     c.FF_SALES AS revenue,
+# MAGIC     c.FF_NET_INCOME AS net_income,
+# MAGIC     c.FF_EPS_BASIC AS eps,
+# MAGIC     c.FF_ASSETS AS total_assets,
+# MAGIC     c.FF_COM_EQ AS shareholders_equity,
+# MAGIC     c.FF_FUNDS_OPER_GROSS AS operating_cash_flow,
+# MAGIC     c.FF_DEBT_ST AS short_term_debt,
+# MAGIC     c.FF_DEBT_LT AS long_term_debt,
+# MAGIC     ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct,
+# MAGIC     ROUND(c.FF_COM_EQ / NULLIF(c.FF_ASSETS, 0) * 100, 2) AS equity_ratio_pct,
+# MAGIC     ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE c.ff_date >= '2023-01-01'  -- Recent fiscal year data
-# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.ff_date DESC) = 1  -- Most recent fiscal data
+# MAGIC   WHERE c.DATE >= '2023-01-01'  -- Recent fiscal year data
+# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1  -- Most recent fiscal data
 # MAGIC )
 # MAGIC
 # MAGIC SELECT
-# MAGIC   p.customer_id,
-# MAGIC   p.ticker_symbol,
+# MAGIC   p.symbol,
 # MAGIC   p.shares_held,
-# MAGIC   ROUND(p.position_value, 2) AS position_value_usd,
 # MAGIC   f.fiscal_date AS latest_fiscal_date,
+# MAGIC
+# MAGIC   -- Financial Performance
 # MAGIC   ROUND(f.revenue / 1000000, 2) AS revenue_millions,
 # MAGIC   ROUND(f.net_income / 1000000, 2) AS net_income_millions,
 # MAGIC   f.eps AS earnings_per_share,
+# MAGIC   ROUND(p.shares_held * f.eps, 2) AS my_share_of_earnings,
+# MAGIC
+# MAGIC   -- Profitability Metrics
 # MAGIC   f.profit_margin_pct,
+# MAGIC
+# MAGIC   -- Financial Health
 # MAGIC   f.equity_ratio_pct,
 # MAGIC   f.debt_to_equity,
-# MAGIC   ROUND(p.shares_held * f.eps, 2) AS position_earnings_value,
+# MAGIC   ROUND(f.operating_cash_flow / 1000000, 2) AS operating_cf_millions,
+# MAGIC
+# MAGIC   -- Overall Assessment
 # MAGIC   CASE
 # MAGIC     WHEN f.net_income < 0 THEN 'Unprofitable'
-# MAGIC     WHEN f.debt_to_equity > 2 THEN 'High Leverage'
+# MAGIC     WHEN f.debt_to_equity > 2.5 THEN 'High Leverage Risk'
 # MAGIC     WHEN f.profit_margin_pct < 5 THEN 'Low Margin'
+# MAGIC     WHEN f.profit_margin_pct > 15 AND f.debt_to_equity < 1.5 THEN 'Strong'
 # MAGIC     ELSE 'Healthy'
 # MAGIC   END AS financial_health
 # MAGIC FROM portfolio p
 # MAGIC JOIN fundamentals_data f ON p.ticker_region = f.ticker_region
-# MAGIC ORDER BY p.position_value DESC;
+# MAGIC ORDER BY p.shares_held DESC;
 
 # COMMAND ----------
 
@@ -214,297 +251,364 @@
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 14
 # MAGIC %sql
 # MAGIC -- Portfolio enriched with analyst consensus estimates
-# MAGIC -- Shows forward-looking earnings projections
+# MAGIC -- Shows forward-looking earnings projections for your holdings
 # MAGIC
 # MAGIC WITH portfolio AS (
 # MAGIC   SELECT
-# MAGIC     customer_id,
-# MAGIC     ticker_symbol,
-# MAGIC     CONCAT(ticker_symbol, '-US') AS ticker_region,
-# MAGIC     shares_held,
-# MAGIC     cost_basis,
-# MAGIC     shares_held * cost_basis AS position_value
-# MAGIC   FROM portfolio_federated.dbo.customer_holdings
+# MAGIC     symbol,
+# MAGIC     UPPER(symbol) AS ticker_region ,
+# MAGIC     number_of_shares AS shares_held
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE instrument_type = 'Equity'
 # MAGIC ),
 # MAGIC estimates_data AS (
 # MAGIC   SELECT
 # MAGIC     a.ticker_region,
-# MAGIC     c.fe_item AS estimate_item,
-# MAGIC     c.fe_fp_end AS fiscal_period_end,
-# MAGIC     c.fe_cons_mean AS consensus_mean,
-# MAGIC     c.fe_cons_median AS consensus_median,
-# MAGIC     c.fe_cons_high AS consensus_high,
-# MAGIC     c.fe_cons_low AS consensus_low,
-# MAGIC     c.fe_cons_stdev AS consensus_std_dev,
-# MAGIC     c.fe_cons_est_cnt AS analyst_count,
-# MAGIC     c.cons_end_date
+# MAGIC     c.FE_ITEM AS estimate_item,
+# MAGIC     c.FE_FP_END AS fiscal_period_end,
+# MAGIC     c.FE_MEAN AS consensus_mean,
+# MAGIC     c.FE_MEDIAN AS consensus_median,
+# MAGIC     c.FE_HIGH AS consensus_high,
+# MAGIC     c.FE_LOW AS consensus_low,
+# MAGIC     c.FE_STD_DEV AS consensus_std_dev,
+# MAGIC     c.FE_NUM_EST AS analyst_count,
+# MAGIC     c.CONS_END_DATE
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE c.fe_item = 'EPS'  -- Focus on EPS estimates
-# MAGIC     AND c.fe_fp_end >= CURRENT_DATE()  -- Future estimates only
-# MAGIC     AND c.cons_end_date IS NULL  -- Latest consensus for each period
+# MAGIC   WHERE c.FE_ITEM = 'EPS'  -- Focus on EPS estimates
+# MAGIC     AND c.FE_FP_END >= CURRENT_DATE()  -- Future estimates only
+# MAGIC     AND c.CONS_END_DATE IS NULL  -- Latest consensus for each period
 # MAGIC )
 # MAGIC
 # MAGIC SELECT
-# MAGIC   p.customer_id,
-# MAGIC   p.ticker_symbol,
+# MAGIC   p.symbol,
 # MAGIC   p.shares_held,
-# MAGIC   ROUND(p.position_value, 2) AS position_value_usd,
 # MAGIC   e.fiscal_period_end,
-# MAGIC   e.consensus_mean AS eps_consensus_mean,
-# MAGIC   e.consensus_median AS eps_consensus_median,
-# MAGIC   e.consensus_high AS eps_high,
-# MAGIC   e.consensus_low AS eps_low,
-# MAGIC   ROUND(e.consensus_std_dev, 2) AS eps_std_dev,
-# MAGIC   e.analyst_count,
-# MAGIC   ROUND(p.shares_held * e.consensus_mean, 2) AS projected_earnings_value,
+# MAGIC
+# MAGIC   -- Analyst Consensus
+# MAGIC   e.consensus_mean AS eps_consensus,
+# MAGIC   e.consensus_median AS eps_median,
+# MAGIC   e.consensus_high AS eps_high_estimate,
+# MAGIC   e.consensus_low AS eps_low_estimate,
+# MAGIC   e.analyst_count AS num_analysts,
+# MAGIC
+# MAGIC   -- Your Position Impact
+# MAGIC   ROUND(p.shares_held * e.consensus_mean, 2) AS my_projected_earnings,
+# MAGIC   ROUND(p.shares_held * e.consensus_high, 2) AS my_best_case_earnings,
+# MAGIC   ROUND(p.shares_held * e.consensus_low, 2) AS my_worst_case_earnings,
+# MAGIC
+# MAGIC   -- Analyst Agreement
+# MAGIC   ROUND(e.consensus_std_dev, 2) AS eps_std_deviation,
 # MAGIC   ROUND((e.consensus_high - e.consensus_low) / NULLIF(e.consensus_mean, 0) * 100, 2) AS estimate_spread_pct,
+# MAGIC
+# MAGIC   -- Outlook Signal
 # MAGIC   CASE
-# MAGIC     WHEN e.analyst_count < 3 THEN 'Low Coverage'
-# MAGIC     WHEN (e.consensus_high - e.consensus_low) / NULLIF(e.consensus_mean, 0) > 0.5 THEN 'High Uncertainty'
-# MAGIC     WHEN e.consensus_mean > 0 THEN 'Positive Outlook'
-# MAGIC     ELSE 'Negative Outlook'
+# MAGIC     WHEN e.analyst_count < 3 THEN 'Low Coverage - Limited Data'
+# MAGIC     WHEN (e.consensus_high - e.consensus_low) / NULLIF(e.consensus_mean, 0) > 0.5 THEN 'High Uncertainty - Divergent Views'
+# MAGIC     WHEN e.consensus_mean > 0 THEN 'Positive Outlook - Profitable Expected'
+# MAGIC     ELSE 'Negative Outlook - Losses Expected'
 # MAGIC   END AS analyst_signal
 # MAGIC FROM portfolio p
 # MAGIC JOIN estimates_data e ON p.ticker_region = e.ticker_region
 # MAGIC WHERE e.fiscal_period_end <= DATE_ADD(CURRENT_DATE(), 365)  -- Next 12 months
-# MAGIC ORDER BY p.position_value DESC, e.fiscal_period_end;
+# MAGIC ORDER BY p.shares_held DESC, e.fiscal_period_end;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 7: Comprehensive Investment Analysis
+# MAGIC ## Step 7: Complete Portfolio Investment Analysis
 # MAGIC
-# MAGIC Combine historical fundamentals + forward estimates for complete portfolio insights.
+# MAGIC Combine historical fundamentals + forward estimates for comprehensive investment decisions.
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 17
 # MAGIC %sql
 # MAGIC -- Complete investment analysis: Fundamentals + Estimates + Risk Metrics
 # MAGIC
 # MAGIC WITH portfolio AS (
 # MAGIC   SELECT
-# MAGIC     customer_id,
-# MAGIC     ticker_symbol,
-# MAGIC     CONCAT(ticker_symbol, '-US') AS ticker_region,
-# MAGIC     shares_held,
-# MAGIC     cost_basis,
-# MAGIC     shares_held * cost_basis AS position_value,
-# MAGIC     purchase_date,
-# MAGIC     account_type
-# MAGIC   FROM portfolio_federated.dbo.customer_holdings
+# MAGIC     symbol,
+# MAGIC     UPPER(symbol) AS ticker_region ,
+# MAGIC     number_of_shares AS shares_held,
+# MAGIC     instrument_type
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE instrument_type = 'Equity'
 # MAGIC ),
 # MAGIC fundamentals AS (
 # MAGIC   SELECT
 # MAGIC     a.ticker_region,
-# MAGIC     c.ff_date AS fiscal_date,
-# MAGIC     c.ff_sales AS revenue,
-# MAGIC     c.ff_net_inc AS net_income,
-# MAGIC     c.ff_eps_basic AS historical_eps,
-# MAGIC     c.ff_oper_cf AS operating_cash_flow,
-# MAGIC     c.ff_com_eq AS shareholders_equity,
-# MAGIC     c.ff_assets AS total_assets,
-# MAGIC     (c.ff_debt_st + c.ff_debt_lt) AS total_debt,
-# MAGIC     ROUND(c.ff_net_inc / NULLIF(c.ff_sales, 0) * 100, 2) AS profit_margin_pct,
-# MAGIC     ROUND((c.ff_debt_st + c.ff_debt_lt) / NULLIF(c.ff_com_eq, 0), 2) AS debt_to_equity
+# MAGIC     c.DATE AS fiscal_date,
+# MAGIC     c.FF_SALES AS revenue,
+# MAGIC     c.FF_NET_INCOME AS net_income,
+# MAGIC     c.FF_EPS_BASIC AS historical_eps,
+# MAGIC     c.FF_FUNDS_OPER_GROSS AS operating_cash_flow,
+# MAGIC     c.FF_COM_EQ AS shareholders_equity,
+# MAGIC     c.FF_ASSETS AS total_assets,
+# MAGIC     (c.FF_DEBT_ST + c.FF_DEBT_LT) AS total_debt,
+# MAGIC     ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct,
+# MAGIC     ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE c.ff_date >= '2023-01-01'
-# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.ff_date DESC) = 1
+# MAGIC   WHERE c.DATE >= '2023-01-01'
+# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1
 # MAGIC ),
 # MAGIC estimates AS (
 # MAGIC   SELECT
 # MAGIC     a.ticker_region,
-# MAGIC     c.fe_fp_end AS next_fiscal_period,
-# MAGIC     c.fe_cons_mean AS eps_estimate,
-# MAGIC     c.fe_cons_high AS eps_high,
-# MAGIC     c.fe_cons_low AS eps_low,
-# MAGIC     c.fe_cons_est_cnt AS analyst_count
+# MAGIC     c.FE_FP_END AS next_fiscal_period,
+# MAGIC     c.FE_MEAN AS eps_estimate,
+# MAGIC     c.FE_HIGH AS eps_high,
+# MAGIC     c.FE_LOW AS eps_low,
+# MAGIC     c.FE_NUM_EST AS analyst_count
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE c.fe_item = 'EPS'
-# MAGIC     AND c.cons_end_date IS NULL
-# MAGIC     AND c.fe_fp_end >= CURRENT_DATE()
-# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.fe_fp_end) = 1
+# MAGIC   WHERE c.FE_ITEM = 'EPS'
+# MAGIC     AND c.CONS_END_DATE IS NULL
+# MAGIC     AND c.FE_FP_END >= CURRENT_DATE()
+# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1
 # MAGIC )
 # MAGIC
 # MAGIC SELECT
-# MAGIC   p.customer_id,
-# MAGIC   p.ticker_symbol,
-# MAGIC   p.account_type,
+# MAGIC   p.symbol,
 # MAGIC   p.shares_held,
-# MAGIC   ROUND(p.position_value, 2) AS position_value_usd,
 # MAGIC
 # MAGIC   -- Historical Fundamentals
 # MAGIC   f.fiscal_date AS latest_fiscal_date,
 # MAGIC   ROUND(f.revenue / 1000000, 2) AS revenue_mm,
 # MAGIC   ROUND(f.net_income / 1000000, 2) AS net_income_mm,
-# MAGIC   f.historical_eps,
+# MAGIC   f.historical_eps AS current_eps,
 # MAGIC   f.profit_margin_pct,
 # MAGIC   f.debt_to_equity,
+# MAGIC   ROUND(f.operating_cash_flow / 1000000, 2) AS operating_cf_mm,
 # MAGIC
 # MAGIC   -- Forward Estimates
-# MAGIC   e.next_fiscal_period,
+# MAGIC   e.next_fiscal_period AS estimate_period,
 # MAGIC   e.eps_estimate AS forward_eps,
-# MAGIC   e.analyst_count,
+# MAGIC   e.analyst_count AS num_analysts,
 # MAGIC
-# MAGIC   -- Calculated Metrics
-# MAGIC   ROUND(p.shares_held * f.historical_eps, 2) AS historical_position_earnings,
-# MAGIC   ROUND(p.shares_held * e.eps_estimate, 2) AS estimated_position_earnings,
+# MAGIC   -- Your Position Impact
+# MAGIC   ROUND(p.shares_held * f.historical_eps, 2) AS my_current_earnings_share,
+# MAGIC   ROUND(p.shares_held * e.eps_estimate, 2) AS my_projected_earnings_share,
+# MAGIC   ROUND(p.shares_held * (e.eps_estimate - f.historical_eps), 2) AS my_expected_earnings_growth,
+# MAGIC
+# MAGIC   -- Growth Metrics
 # MAGIC   ROUND(((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) * 100, 2) AS eps_growth_pct,
 # MAGIC
-# MAGIC   -- Investment Signals
+# MAGIC   -- Investment Signals & Recommendations
 # MAGIC   CASE
-# MAGIC     WHEN f.net_income < 0 THEN 'Sell - Unprofitable'
-# MAGIC     WHEN f.debt_to_equity > 2 THEN 'Hold - High Leverage'
-# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) > 0.15 THEN 'Strong Buy - High Growth'
-# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) > 0 THEN 'Buy - Positive Growth'
-# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) > -0.10 THEN 'Hold - Flat Growth'
-# MAGIC     ELSE 'Sell - Declining Earnings'
-# MAGIC   END AS investment_recommendation
+# MAGIC     WHEN f.net_income < 0 THEN 'SELL - Company Unprofitable'
+# MAGIC     WHEN f.debt_to_equity > 2.5 THEN 'SELL - Excessive Leverage Risk'
+# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) < -0.15 THEN 'SELL - Declining Earnings Expected'
+# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) > 0.20 THEN 'STRONG BUY - High Growth Expected'
+# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) > 0.05 THEN 'BUY - Positive Growth Expected'
+# MAGIC     WHEN ((e.eps_estimate - f.historical_eps) / NULLIF(f.historical_eps, 0)) > -0.10 THEN 'HOLD - Flat Growth'
+# MAGIC     ELSE 'HOLD - Monitor Closely'
+# MAGIC   END AS investment_recommendation,
+# MAGIC
+# MAGIC   -- Risk Assessment
+# MAGIC   CASE
+# MAGIC     WHEN f.net_income < 0 THEN 'High Risk'
+# MAGIC     WHEN f.debt_to_equity > 2.5 THEN 'High Risk'
+# MAGIC     WHEN f.profit_margin_pct < 3 THEN 'Medium Risk'
+# MAGIC     WHEN f.debt_to_equity > 1.5 THEN 'Medium Risk'
+# MAGIC     ELSE 'Low Risk'
+# MAGIC   END AS risk_level
 # MAGIC
 # MAGIC FROM portfolio p
 # MAGIC JOIN fundamentals f ON p.ticker_region = f.ticker_region
 # MAGIC LEFT JOIN estimates e ON p.ticker_region = e.ticker_region
-# MAGIC ORDER BY p.position_value DESC;
+# MAGIC ORDER BY p.shares_held DESC;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 8: Customer Portfolio Risk Assessment
+# MAGIC ## Step 8: Portfolio Risk Assessment & Summary
 # MAGIC
-# MAGIC Aggregate portfolio-level metrics to identify risk concentration and health.
+# MAGIC Aggregate portfolio-level metrics to understand your overall investment health.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Customer-level portfolio risk summary
+# MAGIC -- Trace the full join chain with correct join (no CONCAT)
+# MAGIC WITH step1 AS (
+# MAGIC   SELECT symbol, UPPER(symbol) AS ticker_region
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE instrument_type = 'Equity'
+# MAGIC ),
+# MAGIC step2 AS (
+# MAGIC   SELECT s1.symbol, s1.ticker_region, a.fsym_id AS sym_fsym_id
+# MAGIC   FROM step1 s1
+# MAGIC   LEFT JOIN mp_factset_data.sym_v1.sym_ticker_region a ON s1.ticker_region = a.ticker_region
+# MAGIC ),
+# MAGIC step3 AS (
+# MAGIC   SELECT s2.*, b.fsym_company_id
+# MAGIC   FROM step2 s2
+# MAGIC   LEFT JOIN mp_factset_data.ff_v3.ff_sec_map b ON s2.sym_fsym_id = b.fsym_id
+# MAGIC ),
+# MAGIC step4 AS (
+# MAGIC   SELECT s3.*, f.fsym_id AS fund_fsym_id
+# MAGIC   FROM step3 s3
+# MAGIC   LEFT JOIN mp_factset_data.ff_v3.ff_basic_af f 
+# MAGIC     ON s3.fsym_company_id = f.fsym_id AND f.DATE >= '2020-01-01'
+# MAGIC )
+# MAGIC
+# MAGIC SELECT 
+# MAGIC   'Portfolio Equities' as step, COUNT(*) as row_count FROM step1
+# MAGIC UNION ALL
+# MAGIC SELECT 'After sym_ticker_region join', COUNT(*) FROM step2 WHERE sym_fsym_id IS NOT NULL
+# MAGIC UNION ALL
+# MAGIC SELECT 'After ff_sec_map join', COUNT(*) FROM step3 WHERE fsym_company_id IS NOT NULL
+# MAGIC UNION ALL
+# MAGIC SELECT 'After ff_basic_af join', COUNT(*) FROM step4 WHERE fund_fsym_id IS NOT NULL
+# MAGIC ORDER BY step;
+# MAGIC
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Check if ANY portfolio symbols exist in FactSet
+# MAGIC SELECT 
+# MAGIC   p.symbol,
+# MAGIC   a.ticker_region,
+# MAGIC   a.fsym_id
+# MAGIC FROM mp_portfolio_federated.dbo.equity_holdings p
+# MAGIC JOIN mp_factset_data.sym_v1.sym_ticker_region a
+# MAGIC   ON UPPER(p.symbol) = a.ticker_region
+# MAGIC WHERE p.instrument_type = 'Equity'
+# MAGIC LIMIT 20;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Portfolio risk and diversification summary (FINAL CORRECTED VERSION)
 # MAGIC
 # MAGIC WITH portfolio_analysis AS (
 # MAGIC   SELECT
-# MAGIC     p.customer_id,
-# MAGIC     p.ticker_symbol,
-# MAGIC     CONCAT(p.ticker_symbol, '-US') AS ticker_region,
-# MAGIC     p.shares_held * p.cost_basis AS position_value,
-# MAGIC     f.ff_net_inc AS net_income,
-# MAGIC     f.ff_eps_basic AS historical_eps,
-# MAGIC     e.fe_cons_mean AS eps_estimate,
-# MAGIC     ROUND(((e.fe_cons_mean - f.ff_eps_basic) / NULLIF(f.ff_eps_basic, 0)) * 100, 2) AS eps_growth_pct,
-# MAGIC     (f.ff_debt_st + f.ff_debt_lt) / NULLIF(f.ff_com_eq, 0) AS debt_to_equity
-# MAGIC   FROM portfolio_federated.dbo.customer_holdings p
+# MAGIC     p.symbol,
+# MAGIC     UPPER(p.symbol) AS ticker_region,
+# MAGIC     p.number_of_shares AS shares_held,
+# MAGIC     f.FF_NET_INCOME AS net_income,
+# MAGIC     f.FF_EPS_BASIC AS historical_eps,
+# MAGIC     f.FF_SALES AS revenue,
+# MAGIC     f.FF_FUNDS_OPER_GROSS AS operating_cash_flow,
+# MAGIC     e.FE_MEAN AS eps_estimate,
+# MAGIC     ROUND(((e.FE_MEAN - f.FF_EPS_BASIC) / NULLIF(f.FF_EPS_BASIC, 0)) * 100, 2) AS eps_growth_pct,
+# MAGIC     (f.FF_DEBT_ST + f.FF_DEBT_LT) / NULLIF(f.FF_COM_EQ, 0) AS debt_to_equity,
+# MAGIC     ROUND(f.FF_NET_INCOME / NULLIF(f.FF_SALES, 0) * 100, 2) AS profit_margin_pct,
+# MAGIC     p.number_of_shares * f.FF_EPS_BASIC AS my_current_earnings,
+# MAGIC     p.number_of_shares * e.FE_MEAN AS my_projected_earnings
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings p
 # MAGIC   JOIN mp_factset_data.sym_v1.sym_ticker_region a
-# MAGIC     ON CONCAT(p.ticker_symbol, '-US') = a.ticker_region
+# MAGIC     ON UPPER(p.symbol) = a.ticker_region
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN (
-# MAGIC     SELECT *, ROW_NUMBER() OVER (PARTITION BY fsym_id ORDER BY ff_date DESC) AS rn
+# MAGIC     SELECT *, ROW_NUMBER() OVER (PARTITION BY fsym_id ORDER BY DATE DESC) AS rn
 # MAGIC     FROM mp_factset_data.ff_v3.ff_basic_af
-# MAGIC     WHERE ff_date >= '2023-01-01'
+# MAGIC     WHERE DATE >= '2020-01-01'
 # MAGIC   ) f ON b.fsym_company_id = f.fsym_id AND f.rn = 1
 # MAGIC   LEFT JOIN (
-# MAGIC     SELECT a.ticker_region, c.fe_cons_mean
+# MAGIC     SELECT a.ticker_region, c.FE_MEAN
 # MAGIC     FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC     JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC     JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC     WHERE c.fe_item = 'EPS'
-# MAGIC       AND c.cons_end_date IS NULL
-# MAGIC       AND c.fe_fp_end >= CURRENT_DATE()
-# MAGIC     QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.fe_fp_end) = 1
-# MAGIC   ) e ON a.ticker_region = e.ticker_region
+# MAGIC     WHERE c.FE_ITEM = 'EPS'
+# MAGIC       AND c.CONS_END_DATE IS NULL
+# MAGIC       AND c.FE_FP_END >= CURRENT_DATE()
+# MAGIC     QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1
+# MAGIC   ) e ON UPPER(p.symbol) = e.ticker_region
+# MAGIC   WHERE p.instrument_type = 'Equity'
 # MAGIC )
 # MAGIC
 # MAGIC SELECT
-# MAGIC   customer_id,
-# MAGIC   COUNT(DISTINCT ticker_symbol) AS num_positions,
-# MAGIC   ROUND(SUM(position_value), 2) AS total_portfolio_value_usd,
+# MAGIC   'My Portfolio' AS portfolio_name,
+# MAGIC   COUNT(DISTINCT symbol) AS total_holdings,
+# MAGIC   ROUND(SUM(my_current_earnings), 2) AS total_current_annual_earnings,
+# MAGIC   ROUND(SUM(my_projected_earnings), 2) AS total_projected_annual_earnings,
+# MAGIC   ROUND((SUM(my_projected_earnings) - SUM(my_current_earnings)) / NULLIF(SUM(my_current_earnings), 0) * 100, 2) AS portfolio_growth_rate_pct,
 # MAGIC   ROUND(AVG(eps_growth_pct), 2) AS avg_eps_growth_pct,
-# MAGIC   SUM(CASE WHEN net_income < 0 THEN 1 ELSE 0 END) AS unprofitable_holdings,
-# MAGIC   SUM(CASE WHEN debt_to_equity > 2 THEN 1 ELSE 0 END) AS high_leverage_holdings,
-# MAGIC   SUM(CASE WHEN eps_growth_pct < -10 THEN 1 ELSE 0 END) AS declining_earnings_holdings,
-# MAGIC   ROUND(SUM(CASE WHEN net_income < 0 OR eps_growth_pct < -10 THEN position_value ELSE 0 END), 2) AS at_risk_value_usd,
-# MAGIC   ROUND(
-# MAGIC     SUM(CASE WHEN net_income < 0 OR eps_growth_pct < -10 THEN position_value ELSE 0 END) /
-# MAGIC     NULLIF(SUM(position_value), 0) * 100, 2
-# MAGIC   ) AS risk_exposure_pct,
+# MAGIC   ROUND(AVG(profit_margin_pct), 2) AS avg_profit_margin_pct,
+# MAGIC   ROUND(AVG(debt_to_equity), 2) AS avg_debt_to_equity,
+# MAGIC   SUM(CASE WHEN net_income < 0 THEN 1 ELSE 0 END) AS unprofitable_companies,
+# MAGIC   SUM(CASE WHEN debt_to_equity > 2.5 THEN 1 ELSE 0 END) AS high_leverage_companies,
+# MAGIC   SUM(CASE WHEN eps_growth_pct < -10 THEN 1 ELSE 0 END) AS declining_earnings_companies,
+# MAGIC   SUM(CASE WHEN operating_cash_flow < 0 THEN 1 ELSE 0 END) AS negative_cash_flow_companies,
+# MAGIC   SUM(CASE WHEN eps_growth_pct > 20 THEN 1 ELSE 0 END) AS high_growth_stocks,
+# MAGIC   SUM(CASE WHEN profit_margin_pct > 15 AND debt_to_equity < 1.5 THEN 1 ELSE 0 END) AS quality_stocks,
 # MAGIC   CASE
-# MAGIC     WHEN SUM(CASE WHEN net_income < 0 OR eps_growth_pct < -10 THEN position_value ELSE 0 END) /
-# MAGIC          NULLIF(SUM(position_value), 0) > 0.30 THEN 'High Risk'
-# MAGIC     WHEN SUM(CASE WHEN net_income < 0 OR eps_growth_pct < -10 THEN position_value ELSE 0 END) /
-# MAGIC          NULLIF(SUM(position_value), 0) > 0.15 THEN 'Medium Risk'
-# MAGIC     ELSE 'Healthy'
+# MAGIC     WHEN SUM(CASE WHEN net_income < 0 OR eps_growth_pct < -10 THEN shares_held ELSE 0 END) /
+# MAGIC          NULLIF(SUM(shares_held), 0) > 0.30 THEN '⚠️ HIGH RISK - Consider Rebalancing'
+# MAGIC     WHEN SUM(CASE WHEN net_income < 0 OR eps_growth_pct < -10 THEN shares_held ELSE 0 END) /
+# MAGIC          NULLIF(SUM(shares_held), 0) > 0.15 THEN '⚠️ MEDIUM RISK - Monitor Closely'
+# MAGIC     WHEN AVG(eps_growth_pct) > 10 AND AVG(profit_margin_pct) > 10 THEN '✅ EXCELLENT - Strong Growth Portfolio'
+# MAGIC     ELSE '✅ HEALTHY - Well Positioned'
 # MAGIC   END AS portfolio_health_rating
-# MAGIC FROM portfolio_analysis
-# MAGIC GROUP BY customer_id
-# MAGIC ORDER BY total_portfolio_value_usd DESC;
+# MAGIC FROM portfolio_analysis;
+# MAGIC
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 9: Deep Dive - Microsoft Portfolio Analysis
+# MAGIC ## Step 9: Individual Stock Deep Dive
 # MAGIC
-# MAGIC Detailed analysis for a specific holding with historical trends and forward estimates.
+# MAGIC Multi-year trend analysis for any stock in your portfolio (change symbol as needed).
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Detailed multi-year analysis for Microsoft
+# MAGIC -- Detailed multi-year analysis for a specific holding
+# MAGIC -- Change 'COLB-US' to any symbol in your portfolio
 # MAGIC
-# MAGIC WITH portfolio AS (
+# MAGIC WITH my_holding AS (
 # MAGIC   SELECT
-# MAGIC     customer_id,
-# MAGIC     ticker_symbol,
-# MAGIC     shares_held,
-# MAGIC     cost_basis,
-# MAGIC     purchase_date,
-# MAGIC     shares_held * cost_basis AS position_value
-# MAGIC   FROM portfolio_federated.dbo.customer_holdings
-# MAGIC   WHERE ticker_symbol = 'MSFT'
+# MAGIC     symbol,
+# MAGIC     number_of_shares AS shares_held
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE symbol = 'COLB-US'  -- Use full symbol WITH -US suffix
+# MAGIC     AND instrument_type = 'Equity'
 # MAGIC ),
 # MAGIC historical_fundamentals AS (
 # MAGIC   SELECT
-# MAGIC     c.ff_date AS fiscal_date,
-# MAGIC     YEAR(c.ff_date) AS fiscal_year,
-# MAGIC     ROUND(c.ff_sales / 1000000, 2) AS revenue_mm,
-# MAGIC     ROUND(c.ff_net_inc / 1000000, 2) AS net_income_mm,
-# MAGIC     c.ff_eps_basic AS eps,
-# MAGIC     ROUND(c.ff_oper_cf / 1000000, 2) AS operating_cf_mm,
-# MAGIC     ROUND(c.ff_net_inc / NULLIF(c.ff_sales, 0) * 100, 2) AS profit_margin_pct,
-# MAGIC     ROUND(c.ff_com_eq / NULLIF(c.ff_assets, 0) * 100, 2) AS equity_ratio_pct
+# MAGIC     c.DATE AS fiscal_date,
+# MAGIC     YEAR(c.DATE) AS fiscal_year,
+# MAGIC     ROUND(c.FF_SALES / 1000000, 2) AS revenue_mm,
+# MAGIC     ROUND(c.FF_NET_INCOME / 1000000, 2) AS net_income_mm,
+# MAGIC     c.FF_EPS_BASIC AS eps,
+# MAGIC     ROUND(c.FF_FUNDS_OPER_GROSS / 1000000, 2) AS operating_cf_mm,
+# MAGIC     ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct,
+# MAGIC     ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE a.ticker_region = 'MSFT-US'
-# MAGIC     AND c.ff_date >= '2021-01-01'
+# MAGIC   WHERE a.ticker_region = 'COLB-US'  -- Must match symbol above
+# MAGIC     AND c.DATE >= '2020-01-01'
 # MAGIC ),
 # MAGIC forward_estimates AS (
 # MAGIC   SELECT
-# MAGIC     c.fe_fp_end AS fiscal_period_end,
-# MAGIC     c.fe_item AS item,
-# MAGIC     c.fe_cons_mean AS consensus_estimate,
-# MAGIC     c.fe_cons_high AS high_estimate,
-# MAGIC     c.fe_cons_low AS low_estimate,
-# MAGIC     c.fe_cons_est_cnt AS analyst_count
+# MAGIC     c.FE_FP_END AS fiscal_period_end,
+# MAGIC     c.FE_ITEM AS item,
+# MAGIC     c.FE_MEAN AS consensus_estimate,
+# MAGIC     c.FE_HIGH AS high_estimate,
+# MAGIC     c.FE_LOW AS low_estimate,
+# MAGIC     c.FE_NUM_EST AS analyst_count
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE a.ticker_region = 'MSFT-US'
-# MAGIC     AND c.fe_item = 'EPS'
-# MAGIC     AND c.cons_end_date IS NULL
-# MAGIC     AND c.fe_fp_end >= CURRENT_DATE()
+# MAGIC   WHERE a.ticker_region = 'COLB-US'  -- Must match symbol above
+# MAGIC     AND c.FE_ITEM = 'EPS'
+# MAGIC     AND c.CONS_END_DATE IS NULL
+# MAGIC     AND c.FE_FP_END >= CURRENT_DATE()
 # MAGIC )
 # MAGIC
 # MAGIC SELECT
-# MAGIC   p.customer_id,
-# MAGIC   p.ticker_symbol AS ticker,
-# MAGIC   p.shares_held,
-# MAGIC   ROUND(p.position_value, 2) AS position_value_usd,
-# MAGIC   p.purchase_date,
-# MAGIC
-# MAGIC   -- Historical Performance
+# MAGIC   m.symbol,
+# MAGIC   m.shares_held,
 # MAGIC   h.fiscal_date,
 # MAGIC   h.fiscal_year,
 # MAGIC   h.revenue_mm,
@@ -512,102 +616,89 @@
 # MAGIC   h.eps AS historical_eps,
 # MAGIC   h.operating_cf_mm,
 # MAGIC   h.profit_margin_pct,
-# MAGIC
-# MAGIC   -- Forward Estimates
+# MAGIC   h.debt_to_equity,
+# MAGIC   ROUND(m.shares_held * h.eps, 2) AS my_annual_earnings_this_year,
 # MAGIC   f.fiscal_period_end AS estimate_period,
 # MAGIC   f.consensus_estimate AS forward_eps,
 # MAGIC   f.high_estimate AS forward_eps_high,
 # MAGIC   f.low_estimate AS forward_eps_low,
 # MAGIC   f.analyst_count,
-# MAGIC
-# MAGIC   -- Position Impact
-# MAGIC   ROUND(p.shares_held * h.eps, 2) AS historical_position_earnings,
-# MAGIC   ROUND(p.shares_held * f.consensus_estimate, 2) AS estimated_position_earnings,
-# MAGIC
-# MAGIC   -- Growth Metrics
+# MAGIC   ROUND(m.shares_held * f.consensus_estimate, 2) AS my_projected_annual_earnings,
 # MAGIC   ROUND(((f.consensus_estimate - h.eps) / NULLIF(h.eps, 0)) * 100, 2) AS eps_growth_pct
-# MAGIC
-# MAGIC FROM portfolio p
+# MAGIC FROM my_holding m
 # MAGIC CROSS JOIN historical_fundamentals h
 # MAGIC LEFT JOIN forward_estimates f ON f.fiscal_period_end IS NOT NULL
 # MAGIC ORDER BY h.fiscal_year DESC, f.fiscal_period_end;
+# MAGIC
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 10: Create Production Dashboard View
+# MAGIC ## Step 10: Create Personal Investment Dashboard View
 # MAGIC
-# MAGIC Create a unified view combining on-premise portfolio data with FactSet fundamentals and estimates.
+# MAGIC Create a unified view combining your on-premise holdings with FactSet financials and estimates.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Create production-ready dashboard view
-# MAGIC CREATE OR REPLACE VIEW main.analytics.portfolio_factset_dashboard AS
+# MAGIC -- Create production-ready personal portfolio dashboard
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.my_portfolio_dashboard AS
 # MAGIC
 # MAGIC WITH portfolio AS (
 # MAGIC   SELECT
-# MAGIC     customer_id,
-# MAGIC     ticker_symbol,
-# MAGIC     CONCAT(ticker_symbol, '-US') AS ticker_region,
-# MAGIC     shares_held,
-# MAGIC     cost_basis,
-# MAGIC     shares_held * cost_basis AS position_value,
-# MAGIC     purchase_date,
-# MAGIC     account_type
-# MAGIC   FROM portfolio_federated.dbo.customer_holdings
+# MAGIC     symbol,
+# MAGIC     UPPER(symbol) AS ticker_region,
+# MAGIC     number_of_shares AS shares_held,
+# MAGIC     instrument_type
+# MAGIC   FROM mp_portfolio_federated.dbo.equity_holdings
+# MAGIC   WHERE instrument_type = 'Equity'
 # MAGIC ),
 # MAGIC fundamentals AS (
 # MAGIC   SELECT
 # MAGIC     a.ticker_region,
-# MAGIC     c.ff_date AS fiscal_date,
-# MAGIC     c.ff_sales AS revenue,
-# MAGIC     c.ff_net_inc AS net_income,
-# MAGIC     c.ff_eps_basic AS current_eps,
-# MAGIC     c.ff_assets AS total_assets,
-# MAGIC     c.ff_com_eq AS shareholders_equity,
-# MAGIC     c.ff_oper_cf AS operating_cash_flow,
-# MAGIC     (c.ff_debt_st + c.ff_debt_lt) AS total_debt,
-# MAGIC     ROUND(c.ff_net_inc / NULLIF(c.ff_sales, 0) * 100, 2) AS profit_margin_pct,
-# MAGIC     ROUND(c.ff_oper_cf / NULLIF(c.ff_sales, 0) * 100, 2) AS cash_flow_margin_pct,
-# MAGIC     ROUND((c.ff_debt_st + c.ff_debt_lt) / NULLIF(c.ff_com_eq, 0), 2) AS debt_to_equity_ratio,
-# MAGIC     ROUND(c.ff_com_eq / NULLIF(c.ff_assets, 0) * 100, 2) AS equity_ratio_pct
+# MAGIC     c.DATE AS fiscal_date,
+# MAGIC     c.FF_SALES AS revenue,
+# MAGIC     c.FF_NET_INCOME AS net_income,
+# MAGIC     c.FF_EPS_BASIC AS current_eps,
+# MAGIC     c.FF_ASSETS AS total_assets,
+# MAGIC     c.FF_COM_EQ AS shareholders_equity,
+# MAGIC     c.FF_FUNDS_OPER_GROSS AS operating_cash_flow,
+# MAGIC     (c.FF_DEBT_ST + c.FF_DEBT_LT) AS total_debt,
+# MAGIC     ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct,
+# MAGIC     ROUND(c.FF_FUNDS_OPER_GROSS / NULLIF(c.FF_SALES, 0) * 100, 2) AS cash_flow_margin_pct,
+# MAGIC     ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity_ratio,
+# MAGIC     ROUND(c.FF_COM_EQ / NULLIF(c.FF_ASSETS, 0) * 100, 2) AS equity_ratio_pct
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE c.ff_date >= '2023-01-01'
-# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.ff_date DESC) = 1
+# MAGIC   WHERE c.DATE >= '2023-01-01'
+# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1
 # MAGIC ),
 # MAGIC estimates AS (
 # MAGIC   SELECT
 # MAGIC     a.ticker_region,
-# MAGIC     c.fe_fp_end AS next_fiscal_period,
-# MAGIC     c.fe_cons_mean AS forward_eps,
-# MAGIC     c.fe_cons_median AS forward_eps_median,
-# MAGIC     c.fe_cons_high AS forward_eps_high,
-# MAGIC     c.fe_cons_low AS forward_eps_low,
-# MAGIC     c.fe_cons_est_cnt AS analyst_count,
-# MAGIC     ROUND((c.fe_cons_high - c.fe_cons_low) / NULLIF(c.fe_cons_mean, 0) * 100, 2) AS estimate_spread_pct
+# MAGIC     c.FE_FP_END AS next_fiscal_period,
+# MAGIC     c.FE_MEAN AS forward_eps,
+# MAGIC     c.FE_MEDIAN AS forward_eps_median,
+# MAGIC     c.FE_HIGH AS forward_eps_high,
+# MAGIC     c.FE_LOW AS forward_eps_low,
+# MAGIC     c.FE_NUM_EST AS analyst_count,
+# MAGIC     ROUND((c.FE_HIGH - c.FE_LOW) / NULLIF(c.FE_MEAN, 0) * 100, 2) AS estimate_spread_pct
 # MAGIC   FROM mp_factset_data.sym_v1.sym_ticker_region a
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id
-# MAGIC   WHERE c.fe_item = 'EPS'
-# MAGIC     AND c.cons_end_date IS NULL
-# MAGIC     AND c.fe_fp_end >= CURRENT_DATE()
-# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.fe_fp_end) = 1
+# MAGIC   WHERE c.FE_ITEM = 'EPS'
+# MAGIC     AND c.CONS_END_DATE IS NULL
+# MAGIC     AND c.FE_FP_END >= CURRENT_DATE()
+# MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1
 # MAGIC )
 # MAGIC
 # MAGIC SELECT
-# MAGIC   -- Portfolio Info
-# MAGIC   p.customer_id,
-# MAGIC   p.ticker_symbol,
-# MAGIC   p.account_type,
+# MAGIC   -- My Holdings
+# MAGIC   p.symbol,
 # MAGIC   p.shares_held,
-# MAGIC   ROUND(p.position_value, 2) AS position_value_usd,
-# MAGIC   p.purchase_date,
-# MAGIC   DATEDIFF(CURRENT_DATE(), p.purchase_date) AS holding_period_days,
 # MAGIC
-# MAGIC   -- Financial Health Metrics
+# MAGIC   -- Company Financial Health
 # MAGIC   f.fiscal_date AS latest_fiscal_date,
 # MAGIC   ROUND(f.revenue / 1000000, 2) AS revenue_mm,
 # MAGIC   ROUND(f.net_income / 1000000, 2) AS net_income_mm,
@@ -617,33 +708,40 @@
 # MAGIC   f.debt_to_equity_ratio,
 # MAGIC   f.equity_ratio_pct,
 # MAGIC
-# MAGIC   -- Current & Forward Performance
-# MAGIC   f.current_eps AS eps_current,
-# MAGIC   e.forward_eps AS eps_next_period,
-# MAGIC   e.next_fiscal_period AS estimate_fiscal_period,
-# MAGIC   e.analyst_count,
-# MAGIC   e.estimate_spread_pct,
+# MAGIC   -- EPS Performance
+# MAGIC   f.current_eps,
+# MAGIC   e.forward_eps AS forward_eps,
+# MAGIC   e.next_fiscal_period AS next_estimate_period,
+# MAGIC   e.analyst_count AS num_analysts_covering,
+# MAGIC   e.estimate_spread_pct AS analyst_disagreement_pct,
 # MAGIC
-# MAGIC   -- Position Earnings
-# MAGIC   ROUND(p.shares_held * f.current_eps, 2) AS current_position_earnings,
-# MAGIC   ROUND(p.shares_held * e.forward_eps, 2) AS estimated_position_earnings,
+# MAGIC   -- My Share of Company Earnings
+# MAGIC   ROUND(p.shares_held * f.current_eps, 2) AS my_current_annual_earnings,
+# MAGIC   ROUND(p.shares_held * e.forward_eps, 2) AS my_projected_annual_earnings,
+# MAGIC   ROUND(p.shares_held * (e.forward_eps - f.current_eps), 2) AS my_expected_earnings_increase,
 # MAGIC
-# MAGIC   -- Growth & Risk Indicators
-# MAGIC   ROUND(((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) * 100, 2) AS eps_growth_pct,
+# MAGIC   -- Growth Potential
+# MAGIC   ROUND(((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) * 100, 2) AS projected_eps_growth_pct,
+# MAGIC
+# MAGIC   -- Risk Assessment
 # MAGIC   CASE
-# MAGIC     WHEN f.net_income < 0 THEN 'High Risk - Unprofitable'
-# MAGIC     WHEN f.debt_to_equity_ratio > 2.5 THEN 'High Risk - Excessive Leverage'
-# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) < -0.15 THEN 'Medium Risk - Declining Earnings'
-# MAGIC     WHEN f.profit_margin_pct < 3 THEN 'Medium Risk - Low Margins'
-# MAGIC     ELSE 'Low Risk'
-# MAGIC   END AS risk_level,
+# MAGIC     WHEN f.net_income < 0 THEN '🔴 High Risk - Unprofitable'
+# MAGIC     WHEN f.debt_to_equity_ratio > 2.5 THEN '🔴 High Risk - Excessive Debt'
+# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) < -0.15 THEN '🟡 Medium Risk - Declining Earnings'
+# MAGIC     WHEN f.profit_margin_pct < 3 THEN '🟡 Medium Risk - Low Margins'
+# MAGIC     WHEN f.profit_margin_pct > 15 AND f.debt_to_equity_ratio < 1.5 THEN '🟢 Low Risk - Strong Fundamentals'
+# MAGIC     ELSE '🟢 Low Risk'
+# MAGIC   END AS risk_assessment,
+# MAGIC
+# MAGIC   -- Investment Recommendation
 # MAGIC   CASE
-# MAGIC     WHEN f.net_income < 0 THEN 'Sell'
-# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.20 THEN 'Strong Buy'
-# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.05 THEN 'Buy'
-# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > -0.10 THEN 'Hold'
-# MAGIC     ELSE 'Sell'
-# MAGIC   END AS investment_recommendation
+# MAGIC     WHEN f.net_income < 0 THEN '❌ SELL - Company Losing Money'
+# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) < -0.15 THEN '❌ SELL - Earnings Declining'
+# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.20 THEN '💰 STRONG BUY - High Growth Expected'
+# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.05 THEN '✅ BUY - Positive Growth'
+# MAGIC     WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > -0.10 THEN '⏸️ HOLD - Stable'
+# MAGIC     ELSE '⚠️ HOLD - Monitor'
+# MAGIC   END AS action_recommendation
 # MAGIC
 # MAGIC FROM portfolio p
 # MAGIC JOIN fundamentals f ON p.ticker_region = f.ticker_region
@@ -652,194 +750,389 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Query the dashboard view
+# MAGIC -- Query your personal dashboard
 # MAGIC SELECT
-# MAGIC   customer_id,
-# MAGIC   ticker_symbol,
-# MAGIC   account_type,
+# MAGIC   symbol,
 # MAGIC   shares_held,
-# MAGIC   position_value_usd,
-# MAGIC   revenue_mm,
-# MAGIC   net_income_mm,
+# MAGIC   my_current_annual_earnings,
+# MAGIC   my_projected_annual_earnings,
+# MAGIC   projected_eps_growth_pct,
 # MAGIC   profit_margin_pct,
 # MAGIC   debt_to_equity_ratio,
-# MAGIC   eps_current,
-# MAGIC   eps_next_period,
-# MAGIC   eps_growth_pct,
-# MAGIC   analyst_count,
-# MAGIC   risk_level,
-# MAGIC   investment_recommendation
-# MAGIC FROM main.analytics.portfolio_factset_dashboard
-# MAGIC ORDER BY position_value_usd DESC;
+# MAGIC   num_analysts_covering,
+# MAGIC   risk_assessment,
+# MAGIC   action_recommendation
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard
+# MAGIC ORDER BY my_current_annual_earnings DESC;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 11: Portfolio Analytics Dashboard
+# MAGIC ## Step 11: Portfolio Analytics & Visualizations
 # MAGIC
-# MAGIC Create aggregated metrics and visualizations for executive dashboards.
+# MAGIC Create insightful analyses and charts for your investment portfolio.
 
 # COMMAND ----------
 
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-# Load the dashboard data
-dashboard_df = spark.sql("SELECT * FROM main.analytics.portfolio_factset_dashboard")
+# Load your dashboard data
+dashboard_df = spark.sql("SELECT * FROM mp_catalog.analytics.my_portfolio_dashboard")
 
-# Customer Portfolio Summary
-customer_summary = dashboard_df.groupBy("customer_id").agg(
-    F.count("ticker_symbol").alias("num_positions"),
-    F.round(F.sum("position_value_usd"), 2).alias("total_portfolio_value"),
-    F.round(F.avg("eps_growth_pct"), 2).alias("avg_eps_growth"),
+# Portfolio Summary Metrics
+print("📊 MY PORTFOLIO SUMMARY")
+print("=" * 80)
+
+summary = dashboard_df.agg(
+    F.count("symbol").alias("total_positions"),
+    F.round(F.sum("my_current_annual_earnings"), 2).alias("total_current_annual_earnings"),
+    F.round(F.sum("my_projected_annual_earnings"), 2).alias("total_projected_annual_earnings"),
+    F.round(F.avg("projected_eps_growth_pct"), 2).alias("avg_growth_rate"),
     F.round(F.avg("profit_margin_pct"), 2).alias("avg_profit_margin"),
-    F.sum(F.when(F.col("risk_level").contains("High"), 1).otherwise(0)).alias("high_risk_positions"),
-    F.sum(F.when(F.col("investment_recommendation") == "Sell", 1).otherwise(0)).alias("sell_recommendations"),
-    F.round(F.sum(F.when(F.col("risk_level").contains("High"), F.col("position_value_usd")).otherwise(0)), 2).alias("at_risk_value")
-).withColumn(
-    "risk_exposure_pct",
-    F.round((F.col("at_risk_value") / F.col("total_portfolio_value")) * 100, 2)
-).withColumn(
-    "portfolio_health",
-    F.when(F.col("risk_exposure_pct") > 25, "Needs Attention")
-     .when(F.col("risk_exposure_pct") > 10, "Monitor Closely")
-     .otherwise("Healthy")
+    F.round(F.avg("debt_to_equity_ratio"), 2).alias("avg_debt_to_equity"),
+    F.sum(F.when(F.col("risk_assessment").contains("High"), 1).otherwise(0)).alias("high_risk_stocks"),
+    F.sum(F.when(F.col("action_recommendation").contains("SELL"), 1).otherwise(0)).alias("sell_recommendations"),
+    F.sum(F.when(F.col("action_recommendation").contains("BUY"), 1).otherwise(0)).alias("buy_opportunities")
 )
 
-display(customer_summary)
+display(summary)
 
 # COMMAND ----------
 
-# Sector/Ticker Concentration Analysis
-ticker_analysis = dashboard_df.groupBy("ticker_symbol").agg(
-    F.count("customer_id").alias("num_customers_holding"),
-    F.sum("shares_held").alias("total_shares_held"),
-    F.round(F.sum("position_value_usd"), 2).alias("total_position_value"),
-    F.round(F.avg("eps_growth_pct"), 2).alias("avg_eps_growth"),
-    F.avg("analyst_count").alias("avg_analyst_coverage"),
-    F.first("investment_recommendation").alias("recommendation")
-).orderBy(F.col("total_position_value").desc())
+# Individual Stock Performance Analysis
+print("📈 STOCK-BY-STOCK ANALYSIS")
+print("=" * 80)
 
-display(ticker_analysis)
-
-# COMMAND ----------
-
-# Risk Matrix: Position Value vs. EPS Growth
-risk_matrix = dashboard_df.select(
-    "customer_id",
-    "ticker_symbol",
-    "position_value_usd",
-    "eps_growth_pct",
+stock_analysis = dashboard_df.select(
+    "symbol",
+    "shares_held",
+    "my_current_annual_earnings",
+    "my_projected_annual_earnings",
+    "projected_eps_growth_pct",
     "profit_margin_pct",
     "debt_to_equity_ratio",
-    "risk_level",
-    "investment_recommendation"
-).orderBy(F.col("position_value_usd").desc())
+    "num_analysts_covering",
+    "risk_assessment",
+    "action_recommendation"
+).orderBy(F.col("my_current_annual_earnings").desc())
 
-display(risk_matrix)
+display(stock_analysis)
 
 # COMMAND ----------
 
-# Performance Metrics by Account Type
-account_analysis = dashboard_df.groupBy("account_type").agg(
-    F.count("ticker_symbol").alias("num_positions"),
-    F.round(F.sum("position_value_usd"), 2).alias("total_value"),
-    F.round(F.avg("eps_growth_pct"), 2).alias("avg_growth"),
-    F.round(F.avg("profit_margin_pct"), 2).alias("avg_margin"),
-    F.sum(F.when(F.col("investment_recommendation") == "Strong Buy", 1).otherwise(0)).alias("strong_buy_count"),
-    F.sum(F.when(F.col("investment_recommendation") == "Buy", 1).otherwise(0)).alias("buy_count"),
-    F.sum(F.when(F.col("investment_recommendation") == "Hold", 1).otherwise(0)).alias("hold_count"),
-    F.sum(F.when(F.col("investment_recommendation") == "Sell", 1).otherwise(0)).alias("sell_count")
-)
+# Top Growth Opportunities
+print("🚀 TOP GROWTH OPPORTUNITIES IN YOUR PORTFOLIO")
+print("=" * 80)
 
-display(account_analysis)
+growth_stocks = dashboard_df.filter(
+    F.col("projected_eps_growth_pct") > 10
+).select(
+    "symbol",
+    "shares_held",
+    "projected_eps_growth_pct",
+    "my_expected_earnings_increase",
+    "profit_margin_pct",
+    "risk_assessment",
+    "action_recommendation"
+).orderBy(F.col("projected_eps_growth_pct").desc())
+
+display(growth_stocks)
+
+# COMMAND ----------
+
+# Risk Alert: Positions Needing Attention
+print("⚠️ POSITIONS REQUIRING ATTENTION")
+print("=" * 80)
+
+risk_alerts = dashboard_df.filter(
+    F.col("risk_assessment").contains("High") |
+    F.col("action_recommendation").contains("SELL")
+).select(
+    "symbol",
+    "shares_held",
+    "my_current_annual_earnings",
+    "projected_eps_growth_pct",
+    "profit_margin_pct",
+    "debt_to_equity_ratio",
+    "risk_assessment",
+    "action_recommendation"
+).orderBy(F.col("my_current_annual_earnings").desc())
+
+display(risk_alerts)
+
+# COMMAND ----------
+
+# Quality Stocks: Strong Fundamentals
+print("💎 QUALITY STOCKS - STRONG FUNDAMENTALS")
+print("=" * 80)
+
+quality_stocks = dashboard_df.filter(
+    (F.col("profit_margin_pct") > 15) &
+    (F.col("debt_to_equity_ratio") < 1.5)
+).select(
+    "symbol",
+    "profit_margin_pct",
+    "debt_to_equity_ratio",
+    "projected_eps_growth_pct",
+    "my_current_annual_earnings",
+    "risk_assessment"
+).orderBy(F.col("profit_margin_pct").desc())
+
+display(quality_stocks)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 12: Export for BI Tools (Tableau, Power BI, Looker)
+# MAGIC ## Step 12: Create Dashboard Tables for Visualization Tools
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Create aggregated summary tables for BI consumption
-# MAGIC
-# MAGIC -- Customer-level metrics
-# MAGIC CREATE OR REPLACE TABLE main.analytics.customer_portfolio_summary AS
+# MAGIC -- Portfolio Summary Table
+# MAGIC CREATE OR REPLACE TABLE mp_catalog.analytics.my_portfolio_summary AS
 # MAGIC SELECT
-# MAGIC   customer_id,
-# MAGIC   COUNT(DISTINCT ticker_symbol) AS num_positions,
-# MAGIC   ROUND(SUM(position_value_usd), 2) AS total_portfolio_value,
-# MAGIC   ROUND(AVG(eps_growth_pct), 2) AS avg_eps_growth_pct,
-# MAGIC   ROUND(AVG(profit_margin_pct), 2) AS avg_profit_margin_pct,
+# MAGIC   'My Portfolio' AS portfolio_name,
+# MAGIC   COUNT(DISTINCT symbol) AS total_holdings,
+# MAGIC   ROUND(SUM(my_current_annual_earnings), 2) AS total_current_earnings,
+# MAGIC   ROUND(SUM(my_projected_annual_earnings), 2) AS total_projected_earnings,
+# MAGIC   ROUND(AVG(projected_eps_growth_pct), 2) AS avg_growth_rate,
+# MAGIC   ROUND(AVG(profit_margin_pct), 2) AS avg_profit_margin,
 # MAGIC   ROUND(AVG(debt_to_equity_ratio), 2) AS avg_debt_to_equity,
-# MAGIC   SUM(CASE WHEN risk_level LIKE '%High%' THEN 1 ELSE 0 END) AS high_risk_count,
-# MAGIC   SUM(CASE WHEN investment_recommendation = 'Sell' THEN 1 ELSE 0 END) AS sell_recommendation_count,
-# MAGIC   ROUND(SUM(CASE WHEN risk_level LIKE '%High%' THEN position_value_usd ELSE 0 END), 2) AS at_risk_value,
-# MAGIC   ROUND(
-# MAGIC     SUM(CASE WHEN risk_level LIKE '%High%' THEN position_value_usd ELSE 0 END) /
-# MAGIC     NULLIF(SUM(position_value_usd), 0) * 100, 2
-# MAGIC   ) AS risk_exposure_pct,
+# MAGIC   SUM(CASE WHEN risk_assessment LIKE '%High%' THEN 1 ELSE 0 END) AS high_risk_stocks,
+# MAGIC   SUM(CASE WHEN action_recommendation LIKE '%SELL%' THEN 1 ELSE 0 END) AS stocks_to_sell,
+# MAGIC   SUM(CASE WHEN action_recommendation LIKE '%BUY%' THEN 1 ELSE 0 END) AS buying_opportunities,
+# MAGIC   SUM(CASE WHEN projected_eps_growth_pct > 20 THEN 1 ELSE 0 END) AS high_growth_stocks,
 # MAGIC   CURRENT_TIMESTAMP() AS last_updated
-# MAGIC FROM main.analytics.portfolio_factset_dashboard
-# MAGIC GROUP BY customer_id;
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard;
 # MAGIC
-# MAGIC SELECT * FROM main.analytics.customer_portfolio_summary
-# MAGIC ORDER BY total_portfolio_value DESC;
+# MAGIC SELECT * FROM mp_catalog.analytics.my_portfolio_summary;
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Holdings with action recommendations
-# MAGIC CREATE OR REPLACE TABLE main.analytics.holdings_action_items AS
+# MAGIC -- Action Items Table - Prioritized by Urgency
+# MAGIC CREATE OR REPLACE TABLE mp_catalog.analytics.my_action_items AS
 # MAGIC SELECT
-# MAGIC   customer_id,
-# MAGIC   ticker_symbol,
-# MAGIC   account_type,
-# MAGIC   position_value_usd,
-# MAGIC   eps_current,
-# MAGIC   eps_next_period,
-# MAGIC   eps_growth_pct,
+# MAGIC   symbol,
+# MAGIC   shares_held,
+# MAGIC   my_current_annual_earnings,
+# MAGIC   my_projected_annual_earnings,
+# MAGIC   projected_eps_growth_pct,
 # MAGIC   profit_margin_pct,
 # MAGIC   debt_to_equity_ratio,
-# MAGIC   analyst_count,
-# MAGIC   risk_level,
-# MAGIC   investment_recommendation,
+# MAGIC   num_analysts_covering,
+# MAGIC   risk_assessment,
+# MAGIC   action_recommendation,
 # MAGIC   CASE
-# MAGIC     WHEN investment_recommendation = 'Sell' THEN 'Action Required'
-# MAGIC     WHEN risk_level LIKE '%High%' THEN 'Review Recommended'
-# MAGIC     WHEN eps_growth_pct > 20 THEN 'Consider Increasing Position'
-# MAGIC     ELSE 'Monitor'
-# MAGIC   END AS action_priority,
+# MAGIC     WHEN action_recommendation LIKE '%SELL%' THEN '🔴 URGENT - Consider Selling'
+# MAGIC     WHEN risk_assessment LIKE '%High%' THEN '🟡 REVIEW - High Risk'
+# MAGIC     WHEN projected_eps_growth_pct > 25 THEN '🟢 OPPORTUNITY - Strong Growth'
+# MAGIC     WHEN action_recommendation LIKE '%STRONG BUY%' THEN '💰 OPPORTUNITY - Consider Buying More'
+# MAGIC     ELSE '⚪ MONITOR - Stable'
+# MAGIC   END AS priority_action,
 # MAGIC   CURRENT_TIMESTAMP() AS last_updated
-# MAGIC FROM main.analytics.portfolio_factset_dashboard
-# MAGIC WHERE investment_recommendation IN ('Sell', 'Strong Buy')
-# MAGIC    OR risk_level LIKE '%High%'
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard
+# MAGIC WHERE action_recommendation LIKE '%SELL%'
+# MAGIC    OR action_recommendation LIKE '%STRONG BUY%'
+# MAGIC    OR risk_assessment LIKE '%High%'
+# MAGIC    OR projected_eps_growth_pct > 20
 # MAGIC ORDER BY
 # MAGIC   CASE
-# MAGIC     WHEN investment_recommendation = 'Sell' THEN 1
-# MAGIC     WHEN risk_level LIKE '%High%' THEN 2
-# MAGIC     ELSE 3
+# MAGIC     WHEN action_recommendation LIKE '%SELL%' THEN 1
+# MAGIC     WHEN risk_assessment LIKE '%High%' THEN 2
+# MAGIC     WHEN projected_eps_growth_pct > 25 THEN 3
+# MAGIC     ELSE 4
 # MAGIC   END,
-# MAGIC   position_value_usd DESC;
+# MAGIC   my_current_annual_earnings DESC;
 # MAGIC
-# MAGIC SELECT * FROM main.analytics.holdings_action_items;
+# MAGIC SELECT * FROM mp_catalog.analytics.my_action_items;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Stock Performance Rankings
+# MAGIC CREATE OR REPLACE TABLE mp_catalog.analytics.my_stock_rankings AS
+# MAGIC SELECT
+# MAGIC   symbol,
+# MAGIC   shares_held,
+# MAGIC   my_current_annual_earnings AS annual_earnings_contribution,
+# MAGIC   projected_eps_growth_pct AS growth_rate,
+# MAGIC   profit_margin_pct,
+# MAGIC   debt_to_equity_ratio,
+# MAGIC   num_analysts_covering,
+# MAGIC
+# MAGIC   -- Performance Score (100 point scale)
+# MAGIC   ROUND(
+# MAGIC     (CASE WHEN projected_eps_growth_pct > 0 THEN LEAST(projected_eps_growth_pct, 30) ELSE 0 END) +  -- Growth (30 pts)
+# MAGIC     (CASE WHEN profit_margin_pct > 0 THEN LEAST(profit_margin_pct, 30) ELSE 0 END) +  -- Profitability (30 pts)
+# MAGIC     (CASE WHEN debt_to_equity_ratio < 2 THEN 20 ELSE 10 END) +  -- Financial Health (20 pts)
+# MAGIC     (CASE WHEN num_analysts_covering >= 10 THEN 20 ELSE num_analysts_covering * 2 END), -- Coverage (20 pts)
+# MAGIC   0) AS performance_score,
+# MAGIC
+# MAGIC   risk_assessment,
+# MAGIC   action_recommendation
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard
+# MAGIC ORDER BY performance_score DESC;
+# MAGIC
+# MAGIC SELECT * FROM mp_catalog.analytics.my_stock_rankings;
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🎯 Key Accomplishments
+# MAGIC ## Step 13: Create AI/BI Dashboard
 # MAGIC
-# MAGIC ### What We Demonstrated:
+# MAGIC Generate a comprehensive Databricks AI/BI Dashboard with key insights and visualizations.
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- AI/BI Dashboard: Portfolio Overview
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.aibi_portfolio_overview AS
+# MAGIC SELECT
+# MAGIC   'Portfolio Health' AS metric_category,
+# MAGIC   COUNT(DISTINCT symbol) AS total_stocks,
+# MAGIC   ROUND(SUM(my_current_annual_earnings), 2) AS total_annual_earnings,
+# MAGIC   ROUND(SUM(my_projected_annual_earnings), 2) AS projected_annual_earnings,
+# MAGIC   ROUND(
+# MAGIC     (SUM(my_projected_annual_earnings) - SUM(my_current_annual_earnings)) /
+# MAGIC     NULLIF(SUM(my_current_annual_earnings), 0) * 100, 2
+# MAGIC   ) AS portfolio_growth_pct,
+# MAGIC   ROUND(AVG(profit_margin_pct), 2) AS avg_profit_margin,
+# MAGIC   ROUND(AVG(debt_to_equity_ratio), 2) AS avg_leverage
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- AI/BI Dashboard: Risk Distribution
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.aibi_risk_distribution AS
+# MAGIC SELECT
+# MAGIC   CASE
+# MAGIC     WHEN risk_assessment LIKE '%High%' THEN 'High Risk'
+# MAGIC     WHEN risk_assessment LIKE '%Medium%' THEN 'Medium Risk'
+# MAGIC     ELSE 'Low Risk'
+# MAGIC   END AS risk_category,
+# MAGIC   COUNT(*) AS num_stocks,
+# MAGIC   ROUND(SUM(my_current_annual_earnings), 2) AS total_earnings,
+# MAGIC   ROUND(AVG(projected_eps_growth_pct), 2) AS avg_growth_rate
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard
+# MAGIC GROUP BY risk_category
+# MAGIC ORDER BY
+# MAGIC   CASE risk_category
+# MAGIC     WHEN 'High Risk' THEN 1
+# MAGIC     WHEN 'Medium Risk' THEN 2
+# MAGIC     ELSE 3
+# MAGIC   END;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- AI/BI Dashboard: Investment Actions Distribution
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.aibi_action_distribution AS
+# MAGIC SELECT
+# MAGIC   CASE
+# MAGIC     WHEN action_recommendation LIKE '%STRONG BUY%' THEN 'Strong Buy'
+# MAGIC     WHEN action_recommendation LIKE '%BUY%' THEN 'Buy'
+# MAGIC     WHEN action_recommendation LIKE '%SELL%' THEN 'Sell'
+# MAGIC     ELSE 'Hold'
+# MAGIC   END AS recommendation,
+# MAGIC   COUNT(*) AS num_stocks,
+# MAGIC   ROUND(SUM(my_current_annual_earnings), 2) AS current_earnings_impact,
+# MAGIC   ROUND(AVG(projected_eps_growth_pct), 2) AS avg_expected_growth
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard
+# MAGIC GROUP BY recommendation
+# MAGIC ORDER BY
+# MAGIC   CASE recommendation
+# MAGIC     WHEN 'Sell' THEN 1
+# MAGIC     WHEN 'Hold' THEN 2
+# MAGIC     WHEN 'Buy' THEN 3
+# MAGIC     WHEN 'Strong Buy' THEN 4
+# MAGIC   END;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- AI/BI Dashboard: Top Performers and Laggards
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.aibi_stock_performance AS
+# MAGIC SELECT
+# MAGIC   symbol,
+# MAGIC   shares_held,
+# MAGIC   my_current_annual_earnings,
+# MAGIC   my_projected_annual_earnings,
+# MAGIC   projected_eps_growth_pct,
+# MAGIC   profit_margin_pct,
+# MAGIC   CASE
+# MAGIC     WHEN projected_eps_growth_pct > 15 THEN '🚀 Top Performer'
+# MAGIC     WHEN projected_eps_growth_pct > 5 THEN '📈 Above Average'
+# MAGIC     WHEN projected_eps_growth_pct > -5 THEN '➡️ Stable'
+# MAGIC     ELSE '📉 Underperformer'
+# MAGIC   END AS performance_tier
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard
+# MAGIC ORDER BY projected_eps_growth_pct DESC;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 📊 Create Databricks AI/BI Dashboard
 # MAGIC
-# MAGIC 1. ✅ **Portfolio data stayed on-premise** - Zero data migration required
-# MAGIC 2. ✅ **FactSet symbology mapping** - Proper joins using ticker_region → fsym_id → fsym_company_id
-# MAGIC 3. ✅ **Complete fundamentals integration** - Revenue, earnings, cash flow, debt ratios from ff_v3.ff_basic_af
-# MAGIC 4. ✅ **Forward-looking estimates** - Analyst consensus EPS projections from fe_v4.fe_basic_conh_af
-# MAGIC 5. ✅ **Automated risk scoring** - Profitability, leverage, and growth trend analysis
-# MAGIC 6. ✅ **Investment recommendations** - Buy/Hold/Sell signals based on comprehensive metrics
-# MAGIC 7. ✅ **Production dashboards** - Multi-level views for portfolio managers and executives
-# MAGIC 8. ✅ **BI tool integration** - Summary tables ready for Tableau, Power BI, Looker
+# MAGIC Use these queries to create interactive visualizations in Databricks AI/BI Dashboards:
+# MAGIC
+# MAGIC **Dashboard Components:**
+# MAGIC
+# MAGIC 1. **Portfolio Health KPIs** (Counter Visualization)
+# MAGIC    - Total Holdings
+# MAGIC    - Current Annual Earnings
+# MAGIC    - Projected Growth %
+# MAGIC    - Query: `SELECT * FROM main.analytics.aibi_portfolio_overview`
+# MAGIC
+# MAGIC 2. **Risk Distribution** (Pie Chart)
+# MAGIC    - Shows portfolio allocation across risk levels
+# MAGIC    - Query: `SELECT * FROM main.analytics.aibi_risk_distribution`
+# MAGIC
+# MAGIC 3. **Investment Actions** (Bar Chart)
+# MAGIC    - Distribution of Buy/Hold/Sell recommendations
+# MAGIC    - Query: `SELECT * FROM main.analytics.aibi_action_distribution`
+# MAGIC
+# MAGIC 4. **Stock Performance** (Table with Color Coding)
+# MAGIC    - Ranked list of holdings by growth potential
+# MAGIC    - Query: `SELECT * FROM main.analytics.aibi_stock_performance`
+# MAGIC
+# MAGIC 5. **Earnings Waterfall** (Combo Chart)
+# MAGIC    - Current vs Projected earnings by stock
+# MAGIC    - Query: `SELECT symbol, my_current_annual_earnings, my_projected_annual_earnings FROM main.analytics.my_portfolio_dashboard`
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Sample Dashboard Query: Portfolio Performance Summary
+# MAGIC SELECT
+# MAGIC   p.symbol,
+# MAGIC   p.my_current_annual_earnings AS current_earnings,
+# MAGIC   p.my_projected_annual_earnings AS projected_earnings,
+# MAGIC   p.projected_eps_growth_pct AS growth_rate,
+# MAGIC   p.risk_assessment,
+# MAGIC   p.action_recommendation,
+# MAGIC   r.performance_score
+# MAGIC FROM mp_catalog.analytics.my_portfolio_dashboard p
+# MAGIC JOIN mp_catalog.analytics.my_stock_rankings r ON p.symbol = r.symbol
+# MAGIC ORDER BY r.performance_score DESC;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 🎯 What You Now Have
+# MAGIC
+# MAGIC ### Your Personal Investment Intelligence Platform:
+# MAGIC
+# MAGIC 1. ✅ **Privacy-Preserving Architecture** - Your holdings stay on-premise, zero data movement to cloud
+# MAGIC 2. ✅ **Institutional-Grade Data** - FactSet financials, estimates, and analyst consensus for all your stocks
+# MAGIC 3. ✅ **Comprehensive Financial Analysis** - Revenue, earnings, cash flow, debt ratios, profit margins
+# MAGIC 4. ✅ **Forward-Looking Insights** - Analyst EPS projections showing expected earnings growth
+# MAGIC 5. ✅ **Personalized Earnings Impact** - See YOUR share of company earnings, not just per-share metrics
+# MAGIC 6. ✅ **Automated Risk Assessment** - Identify unprofitable, overleveraged, or declining positions
+# MAGIC 7. ✅ **Actionable Recommendations** - Clear Buy/Hold/Sell signals based on growth and financial health
+# MAGIC 8. ✅ **Interactive Dashboards** - AI/BI visualizations showing portfolio health, risk distribution, opportunities
 # MAGIC
 # MAGIC ### The Value Proposition:
 # MAGIC
@@ -855,27 +1148,31 @@ display(account_analysis)
 # MAGIC - Real-time portfolio analysis ✅
 # MAGIC - Maintain security posture ✅
 # MAGIC
-# MAGIC ## 🏦 Why This Matters for Financial Services
+# MAGIC ## 💡 Key Insights You Can Now Access
 # MAGIC
-# MAGIC ### Security & Compliance
-# MAGIC - Customer PII stays in approved, compliant databases
-# MAGIC - Maintain existing audit trails and access controls
-# MAGIC - No additional data governance burden
+# MAGIC ### 📊 Portfolio Health Monitoring
+# MAGIC - **Total Earnings Power**: See aggregate annual earnings across all holdings
+# MAGIC - **Growth Trajectory**: Portfolio-wide projected growth rate
+# MAGIC - **Quality Metrics**: Average profit margins and leverage across your portfolio
+# MAGIC - **Diversification**: Holdings count and concentration analysis
 # MAGIC
-# MAGIC ### Operational Efficiency
-# MAGIC - No ETL to build and maintain
-# MAGIC - Always querying current data
-# MAGIC - Faster time to insights
+# MAGIC ### ⚠️ Risk Intelligence
+# MAGIC - **Unprofitable Companies**: Identify money-losing investments immediately
+# MAGIC - **Leverage Concerns**: Flag overleveraged companies (debt-to-equity > 2.5)
+# MAGIC - **Declining Earnings**: Spot companies with negative growth projections
+# MAGIC - **Analyst Coverage**: Know which stocks have limited analyst attention
 # MAGIC
-# MAGIC ### Cost Savings
-# MAGIC - No data transfer costs
-# MAGIC - No storage duplication
-# MAGIC - Reduced infrastructure complexity
+# MAGIC ### 💰 Investment Opportunities
+# MAGIC - **High Growth Stocks**: Find positions with >20% projected earnings growth
+# MAGIC - **Quality Plays**: Identify high-margin, low-debt companies
+# MAGIC - **Undervalued Gems**: Stocks with strong fundamentals but low coverage
+# MAGIC - **Analyst Consensus**: Understand where analysts are bullish or bearish
 # MAGIC
-# MAGIC ### Business Agility
-# MAGIC - Support hybrid architectures (on-prem + cloud)
-# MAGIC - Leverage existing investments
-# MAGIC - Enable upstream system integrations without migration
+# MAGIC ### 🎯 Actionable Decisions
+# MAGIC - **Clear Signals**: Automatic Buy/Hold/Sell recommendations
+# MAGIC - **Prioritized Actions**: Know which positions need immediate attention
+# MAGIC - **Performance Scoring**: Rank your holdings objectively
+# MAGIC - **Expected Impact**: See how each decision affects YOUR earnings share
 
 # COMMAND ----------
 
@@ -1019,52 +1316,115 @@ display(account_analysis)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 🚀 Implementation Checklist
+# MAGIC ## 🚀 Quick Start Guide
 # MAGIC
-# MAGIC ### 1. Set Up Federation Connection
+# MAGIC ### ✅ What's Already Set Up
+# MAGIC - **Federated Catalog**: `mp_portfolio_federated` connected to your on-premise database
+# MAGIC - **FactSet Data**: `mp_factset_data` catalog with fundamentals and estimates
+# MAGIC - **Dashboard View**: `main.analytics.my_portfolio_dashboard` with all metrics
+# MAGIC - **Summary Tables**: Pre-built tables for visualizations
+# MAGIC
+# MAGIC ### 📊 Access Your Dashboards
+# MAGIC
+# MAGIC **Main Dashboard:**
 # MAGIC ```sql
-# MAGIC CREATE CONNECTION onprem_sql_connection
-# MAGIC TYPE sqlserver
-# MAGIC OPTIONS (
-# MAGIC   host '<your-server>.database.windows.net',
-# MAGIC   port '1433',
-# MAGIC   user '<username>',
-# MAGIC   password secret('<scope>', '<key>')
-# MAGIC );
-# MAGIC
-# MAGIC CREATE CATALOG portfolio_federated
-# MAGIC USING CONNECTION onprem_sql_connection
-# MAGIC OPTIONS (database 'PortfolioDB');
+# MAGIC SELECT * FROM main.analytics.my_portfolio_dashboard
+# MAGIC ORDER BY my_current_annual_earnings DESC;
 # MAGIC ```
 # MAGIC
-# MAGIC ### 2. Access FactSet Data (mp_factset_data catalog)
-# MAGIC - Verify access to: `ff_v3.ff_basic_af`, `ff_v3.ff_sec_map`
-# MAGIC - Verify access to: `fe_v4.fe_basic_conh_af`, `fe_v4.fe_sec_map`
-# MAGIC - Verify access to: `sym_v1.sym_ticker_region`
+# MAGIC **Portfolio Summary:**
+# MAGIC ```sql
+# MAGIC SELECT * FROM main.analytics.my_portfolio_summary;
+# MAGIC ```
 # MAGIC
-# MAGIC ### 3. Understand Your Portfolio Schema
-# MAGIC - Identify ticker column (convert to ticker_region format with '-US' suffix)
-# MAGIC - Identify position size, cost basis, customer ID fields
-# MAGIC - Determine account type and purchase date if available
+# MAGIC **Action Items (What to do now):**
+# MAGIC ```sql
+# MAGIC SELECT * FROM main.analytics.my_action_items;
+# MAGIC ```
 # MAGIC
-# MAGIC ### 4. Build Core Queries
-# MAGIC - Start with fundamentals: sym_ticker_region → ff_sec_map → ff_basic_af
-# MAGIC - Add estimates: sym_ticker_region → fe_sec_map → fe_basic_conh_af
-# MAGIC - Filter estimates: `fe_item = 'EPS'`, `cons_end_date IS NULL` for latest
+# MAGIC **Stock Rankings:**
+# MAGIC ```sql
+# MAGIC SELECT * FROM main.analytics.my_stock_rankings;
+# MAGIC ```
 # MAGIC
-# MAGIC ### 5. Create Production Views
-# MAGIC - Use the dashboard view pattern from Step 10
-# MAGIC - Add calculated metrics: growth rates, risk scores, recommendations
-# MAGIC - Create summary tables for different user personas
+# MAGIC ### 🎨 Create AI/BI Dashboard
 # MAGIC
-# MAGIC ### 6. Connect BI Tools
-# MAGIC - Point Tableau/Power BI to `main.analytics.portfolio_factset_dashboard`
-# MAGIC - Use `customer_portfolio_summary` for executive dashboards
-# MAGIC - Use `holdings_action_items` for portfolio manager workflows
+# MAGIC 1. Navigate to **Databricks AI/BI Dashboards**
+# MAGIC 2. Click **Create Dashboard**
+# MAGIC 3. Add visualizations using these queries:
+# MAGIC    - Portfolio Overview: `main.analytics.aibi_portfolio_overview`
+# MAGIC    - Risk Distribution: `main.analytics.aibi_risk_distribution`
+# MAGIC    - Action Items: `main.analytics.aibi_action_distribution`
+# MAGIC    - Stock Performance: `main.analytics.aibi_stock_performance`
 # MAGIC
-# MAGIC ## 📚 Resources
+# MAGIC ### 🔄 Keep Data Fresh
 # MAGIC
-# MAGIC - [FactSet on Databricks Marketplace](https://marketplace.databricks.com/)
-# MAGIC - [Lakehouse Federation Documentation](https://docs.databricks.com/query-federation/)
+# MAGIC **Daily Refresh:**
+# MAGIC ```sql
+# MAGIC -- Create a scheduled job to refresh your views
+# MAGIC REFRESH TABLE main.analytics.my_portfolio_dashboard;
+# MAGIC REFRESH TABLE main.analytics.my_portfolio_summary;
+# MAGIC REFRESH TABLE main.analytics.my_action_items;
+# MAGIC REFRESH TABLE main.analytics.my_stock_rankings;
+# MAGIC ```
+# MAGIC
+# MAGIC ### 🎯 Analyze Specific Stocks
+# MAGIC
+# MAGIC **Deep Dive Template** (Change symbol in Step 9):
+# MAGIC - See multi-year financial trends
+# MAGIC - Compare historical vs. projected earnings
+# MAGIC - Understand YOUR specific earnings share
+# MAGIC
+# MAGIC ## 📈 Your Investment Intelligence Toolkit
+# MAGIC
+# MAGIC ### 📊 Views & Tables Created
+# MAGIC
+# MAGIC | Object | Purpose | Query |
+# MAGIC |--------|---------|-------|
+# MAGIC | `my_portfolio_dashboard` | Complete holding-level analysis | All financial metrics + recommendations |
+# MAGIC | `my_portfolio_summary` | Portfolio-level KPIs | Total earnings, growth rate, risk counts |
+# MAGIC | `my_action_items` | Prioritized to-do list | Stocks needing immediate attention |
+# MAGIC | `my_stock_rankings` | Performance scoring | 100-point scale ranking system |
+# MAGIC | `aibi_portfolio_overview` | Dashboard KPI metrics | For counter visualizations |
+# MAGIC | `aibi_risk_distribution` | Risk breakdown | For pie charts |
+# MAGIC | `aibi_action_distribution` | Recommendation split | For bar charts |
+# MAGIC | `aibi_stock_performance` | Performance tiers | For categorization |
+# MAGIC
+# MAGIC ### 🎯 Key Metrics You Can Track
+# MAGIC
+# MAGIC **Earnings Metrics:**
+# MAGIC - `my_current_annual_earnings`: Your share of company's annual profits (current)
+# MAGIC - `my_projected_annual_earnings`: Your share based on analyst estimates (forward)
+# MAGIC - `my_expected_earnings_increase`: Dollar increase you can expect
+# MAGIC
+# MAGIC **Growth Indicators:**
+# MAGIC - `projected_eps_growth_pct`: Expected earnings growth rate
+# MAGIC - `portfolio_growth_rate_pct`: Your entire portfolio's growth trajectory
+# MAGIC
+# MAGIC **Quality Metrics:**
+# MAGIC - `profit_margin_pct`: Company profitability efficiency
+# MAGIC - `debt_to_equity_ratio`: Financial leverage and risk
+# MAGIC - `cash_flow_margin_pct`: Operating cash generation
+# MAGIC - `performance_score`: Composite 0-100 ranking
+# MAGIC
+# MAGIC **Risk Signals:**
+# MAGIC - `risk_assessment`: High/Medium/Low risk classification
+# MAGIC - `action_recommendation`: Buy/Hold/Sell signals
+# MAGIC - `num_analysts_covering`: Analyst attention level
+# MAGIC
+# MAGIC ### 🔗 Next Steps
+# MAGIC
+# MAGIC 1. **Review Your Dashboard**: Run queries in Step 11 to see your portfolio health
+# MAGIC 2. **Check Action Items**: See which stocks need attention (Step 12)
+# MAGIC 3. **Create AI/BI Dashboard**: Build visual dashboards (Step 13)
+# MAGIC 4. **Deep Dive Analysis**: Analyze individual stocks (Step 9)
+# MAGIC 5. **Set Up Alerts**: Create scheduled jobs to monitor changes
+# MAGIC
+# MAGIC ### 📚 Resources
+# MAGIC
+# MAGIC - [FactSet Data Documentation](https://www.factset.com/data-feeds)
+# MAGIC - [Lakehouse Federation Guide](https://docs.databricks.com/query-federation/)
+# MAGIC - [Databricks AI/BI Dashboards](https://docs.databricks.com/dashboards/)
 # MAGIC - [Unity Catalog Best Practices](https://docs.databricks.com/data-governance/)
-# MAGIC - [FactSet Data Feeds Documentation](https://www.factset.com/data-feeds)
+# MAGIC
+# MAGIC
