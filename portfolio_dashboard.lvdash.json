@@ -415,7 +415,7 @@
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "risk_distribution",
+                  "datasetName": "top_earnings",
                   "fields": [
                     {
                       "name": "symbol",
