@@ -7,10 +7,13 @@
 # MAGIC Federation) with **FactSet financial data** (via Databricks Marketplace) to produce an
 # MAGIC investment analytics flow — **without moving any sensitive data to the cloud**.
 # MAGIC
-# MAGIC All steps use `@dlt.view()` (not `@dlt.table()`), so:
-# MAGIC - No data is materialized into cloud storage
-# MAGIC - Every pipeline run re-queries the federated on-prem source live
-# MAGIC - Views are pipeline-internal; downstream reads use `dlt.read(...)`
+# MAGIC All row-level steps use `@dlt.view()` (pipeline-internal, nothing
+# MAGIC persisted) so no federated on-prem holdings and no per-stock FactSet
+# MAGIC rows are materialized. The only `@dlt.table()` is the terminal 1-row
+# MAGIC aggregate `portfolio_summary` — Databricks requires every pipeline to
+# MAGIC contain at least one materialized table, and a 1-row aggregate is the
+# MAGIC minimum footprint. The queryable row-level view is published by the
+# MAGIC companion SQL task `publish_portfolio_dashboard_view`.
 # MAGIC
 # MAGIC The persistent views your dashboard reads from (`mp_catalog.analytics.*`) are created
 # MAGIC separately in `factset_federation_demo` via `CREATE OR REPLACE VIEW`.
@@ -244,9 +247,9 @@ def stock_rankings():
 
 # COMMAND ----------
 
-@dlt.view(
+@dlt.table(
     name="portfolio_summary",
-    comment="Aggregate portfolio-level metrics — total holdings, earnings, risk counts."
+    comment="Terminal 1-row aggregate of portfolio-level metrics. This is the only materialized object in the pipeline (Databricks requires >=1 table per pipeline); all row-level holdings and FactSet data stay in internal views."
 )
 def portfolio_summary():
     rankings = dlt.read("stock_rankings")
