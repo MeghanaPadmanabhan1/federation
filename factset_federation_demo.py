@@ -672,6 +672,9 @@
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id
 # MAGIC   JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id
 # MAGIC   WHERE c.DATE >= '2023-01-01'
+# MAGIC     AND c.FF_EPS_BASIC IS NOT NULL
+# MAGIC     AND ABS(c.FF_EPS_BASIC) < 50   -- guard against malformed EPS values in source data
+# MAGIC     AND c.FF_SALES > 0             -- require real revenue
 # MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1
 # MAGIC ),
 # MAGIC estimates AS (
@@ -690,6 +693,7 @@
 # MAGIC   WHERE c.FE_ITEM = 'EPS'
 # MAGIC     AND c.CONS_END_DATE IS NULL
 # MAGIC     AND c.FE_FP_END >= CURRENT_DATE()
+# MAGIC     AND ABS(c.FE_MEAN) < 50        -- guard against malformed forward EPS values
 # MAGIC   QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1
 # MAGIC )
 # MAGIC
@@ -884,13 +888,15 @@ display(quality_stocks)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 12: Create Dashboard Tables for Visualization Tools
+# MAGIC ## Step 12: Create Dashboard Views for Visualization Tools
+# MAGIC
+# MAGIC These are defined as **VIEWs** (not TABLEs) so the federated on-premise holdings are never materialized into the cloud — every read re-queries the source on-prem database live.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Portfolio Summary Table
-# MAGIC CREATE OR REPLACE TABLE mp_catalog.analytics.my_portfolio_summary AS
+# MAGIC -- Portfolio Summary View
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.my_portfolio_summary AS
 # MAGIC SELECT
 # MAGIC   'My Portfolio' AS portfolio_name,
 # MAGIC   COUNT(DISTINCT symbol) AS total_holdings,
@@ -911,8 +917,8 @@ display(quality_stocks)
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Action Items Table - Prioritized by Urgency
-# MAGIC CREATE OR REPLACE TABLE mp_catalog.analytics.my_action_items AS
+# MAGIC -- Action Items View - Prioritized by Urgency
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.my_action_items AS
 # MAGIC SELECT
 # MAGIC   symbol,
 # MAGIC   shares_held,
@@ -951,8 +957,8 @@ display(quality_stocks)
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Stock Performance Rankings
-# MAGIC CREATE OR REPLACE TABLE mp_catalog.analytics.my_stock_rankings AS
+# MAGIC -- Stock Performance Rankings View
+# MAGIC CREATE OR REPLACE VIEW mp_catalog.analytics.my_stock_rankings AS
 # MAGIC SELECT
 # MAGIC   symbol,
 # MAGIC   shares_held,
