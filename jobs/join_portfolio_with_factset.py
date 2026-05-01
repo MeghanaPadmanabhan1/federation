@@ -1,14 +1,17 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Task 02 — Create `my_portfolio_dashboard` base view
+# MAGIC # Join On-Prem Portfolio with FactSet
 # MAGIC
-# MAGIC The core join: federated on-prem holdings + FactSet fundamentals + FactSet
-# MAGIC estimates. Defined as a regular `CREATE OR REPLACE VIEW` so no data is
-# MAGIC materialized — each query re-evaluates against the federated source.
+# MAGIC Joins the federated on-premise holdings with FactSet fundamentals (annual
+# MAGIC financial statements) and FactSet estimates (forward EPS consensus).
+# MAGIC Produces the base view `mp_catalog.analytics.my_portfolio_dashboard`.
+# MAGIC
+# MAGIC Defined as a regular `CREATE OR REPLACE VIEW` — **no data is materialized**.
+# MAGIC Each query re-evaluates against the federated source + FactSet.
 # MAGIC
 # MAGIC EPS sanity filters (`ABS(eps) < 50`, `FF_SALES > 0`) exclude FactSet rows
 # MAGIC with malformed values for certain micro-cap tickers that otherwise skew
-# MAGIC the earnings totals.
+# MAGIC earnings totals.
 
 # COMMAND ----------
 
@@ -110,11 +113,3 @@
 # MAGIC FROM portfolio p
 # MAGIC JOIN fundamentals f ON p.ticker_region = f.ticker_region
 # MAGIC LEFT JOIN estimates e ON p.ticker_region = e.ticker_region
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Confirm view type (not materialized)
-# MAGIC SELECT table_type FROM system.information_schema.tables
-# MAGIC WHERE table_catalog = 'mp_catalog' AND table_schema = 'analytics'
-# MAGIC   AND table_name = 'my_portfolio_dashboard'

@@ -86,20 +86,27 @@ Portfolio (ticker)  →  Symbology (ticker → ID)  →  FactSet Data (ID)
    - Network connectivity from Databricks
    - Credentials with SELECT permissions
 
-### Step 1: Set Up On-Premise Database
+### Step 1: Generate Sample Holdings Data
+
+Run **`generate_sample_holdings.py`** (in Databricks or any local Python 3 environment — no SDK or extra packages required). It produces:
+
+- `~/equity_holdings.csv` — 200 rows of synthetic equity positions using real US tickers, matching the schema this demo expects.
+- A `CREATE TABLE dbo.equity_holdings (...)` DDL block printed to stdout.
 
 ```bash
-# Run the portfolio setup script in your SQL Server
-sqlcmd -S your-server.database.windows.net \
-       -d PortfolioDB \
-       -U your-username \
-       -P your-password \
-       -i onprem_portfolio_setup.sql
+python3 generate_sample_holdings.py
 ```
 
-Or execute `onprem_portfolio_setup.sql` in Azure Data Studio / SSMS.
+### Step 2: Load the Sample Data into Your On-Premise SQL Server
 
-### Step 2: Configure Databricks Secrets
+In your on-prem Microsoft SQL Server:
+
+1. Run the `CREATE TABLE dbo.equity_holdings` DDL printed by Step 1.
+2. Bulk-load `equity_holdings.csv` into that table (use whatever tool your environment supports — `BULK INSERT`, `bcp`, the SSMS Import Wizard, Azure Data Studio import, etc.). The CSV has a header row and three columns matching the table definition.
+
+The point of these two steps is just to get a `dbo.equity_holdings` table populated in your SQL Server so the rest of the demo has something to federate over. We deliberately don't prescribe the load mechanism — use whatever fits your environment.
+
+### Step 3: Configure Databricks Secrets
 
 ```bash
 # Create secret scope
@@ -112,7 +119,7 @@ databricks secrets put-secret \
   --string-value "your-password"
 ```
 
-### Step 3: Upload Demo Notebook
+### Step 4: Upload Demo Notebook
 
 1. Upload `factset_federation_demo.py` to your Databricks workspace
 2. Attach to a cluster with Unity Catalog enabled
@@ -122,7 +129,7 @@ databricks secrets put-secret \
    - Secret scope name
    - FactSet catalog name
 
-### Step 4: Run the Demo
+### Step 5: Run the Demo
 
 Open the notebook and execute cells in order. The notebook will:
 1. Create a connection to your on-premise database
