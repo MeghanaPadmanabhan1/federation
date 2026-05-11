@@ -220,49 +220,6 @@ Sensitive customer data never leaves the approved, compliant database.
 
 ---
 
-## 🎬 5-Minute Demo Script
-
-Use this script for live demonstrations:
-
-```sql
--- 1. Show on-prem portfolio (30 sec)
-SELECT * FROM portfolio_federated.dbo.customer_holdings LIMIT 5;
-
--- 2. Show FactSet uses IDs (30 sec)
-SELECT * FROM factset_catalog.ff_basic.ff_basic_af LIMIT 5;
-
--- 3. Show symbology mapping (30 sec)
-SELECT ticker, factset_entity_id, proper_name
-FROM factset_catalog.sym_basic.sym_coverage
-WHERE ticker IN ('MSFT', 'AAPL');
-
--- 4. The three-way join (2 min)
-SELECT
-  p.customer_id,
-  p.ticker_symbol,
-  s.proper_name,
-  p.shares_held * p.cost_basis AS position_value,
-  f.net_income,
-  e.mean_estimate AS eps_est_2024
-FROM portfolio_federated.dbo.customer_holdings p
-JOIN factset_catalog.sym_basic.sym_coverage s
-  ON p.ticker_symbol = s.ticker
-JOIN factset_catalog.ff_basic.ff_basic_af f
-  ON s.factset_entity_id = f.factset_entity_id
-JOIN factset_catalog.fe_basic.fe_basic_eps e
-  ON s.factset_entity_id = e.factset_entity_id
-WHERE f.fiscal_year = 2023 AND e.fiscal_year = 2024
-ORDER BY position_value DESC
-LIMIT 10;
-
--- 5. Explain the value (1 min)
--- "Portfolio data NEVER moved"
--- "Queried in place using Lakehouse Federation"
--- "Combined with FactSet for real-time insights"
-```
-
----
-
 ## 💡 Use Cases
 
 ### Financial Services
