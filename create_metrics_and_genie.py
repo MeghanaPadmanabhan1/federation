@@ -166,63 +166,50 @@ print(f"\nTables: {', '.join(GENIE_TABLES)}")
 
 # COMMAND ----------
 
-# Create Genie Space using Databricks SDK
-from databricks.sdk import WorkspaceClient
-
-# Initialize workspace client
-w = WorkspaceClient()
-
-# Get current warehouse ID — spark.conf raises on serverless compute, so guard.
-try:
-    warehouse_id = spark.conf.get("spark.databricks.warehouse.id", None)
-except Exception:
-    warehouse_id = None
-
-if not warehouse_id:
-    # Try to get a warehouse
-    warehouses = list(w.warehouses.list())
-    if warehouses:
-        warehouse_id = warehouses[0].id
-        print(f"Using warehouse: {warehouses[0].name} ({warehouse_id})")
-    else:
-        print("⚠️ No SQL warehouse found. Please specify warehouse_id manually.")
+# MAGIC %md
+# MAGIC ## Step 3: Create the Genie Space (manual, one-time)
+# MAGIC
+# MAGIC **Databricks does not currently expose a from-scratch Genie space creation API.**
+# MAGIC The `create-space` REST/CLI/SDK only accepts a pre-exported `serialized_space`
+# MAGIC blob — it's an import path, not a constructor. So this step is UI-only.
+# MAGIC
+# MAGIC Run the cell below to print the exact field values to paste into the
+# MAGIC Genie creation form, then follow the click-by-click in the output.
 
 # COMMAND ----------
 
-# Create the Genie Space
-try:
-    genie_space = w.genie.create(
-        display_name=GENIE_SPACE_NAME,
-        description=GENIE_DESCRIPTION,
-        warehouse_id=warehouse_id,
-        table_identifiers=GENIE_TABLES
-    )
+from databricks.sdk import WorkspaceClient
 
-    print(f"✅ Genie Space Created Successfully!")
-    print(f"   ID: {genie_space.id}")
-    print(f"   Name: {genie_space.display_name}")
-    print(f"\n📍 Access your Genie Space at:")
-    print(f"   {w.config.host}/genie/rooms/{genie_space.id}")
+w = WorkspaceClient()
+host = w.config.host
 
-    # Store the ID for later use
-    genie_space_id = genie_space.id
-
-except Exception as e:
-    print(f"⚠️ Could not create Genie Space via API: {str(e)}")
-    print("\n" + "=" * 60)
-    print("MANUAL CREATION STEPS:")
-    print("=" * 60)
-    print("\n1. Navigate to: Databricks Workspace → Genie")
-    print("2. Click 'Create' → 'Genie Space'")
-    print(f"3. Name: {GENIE_SPACE_NAME}")
-    print(f"4. Add these tables:")
-    for table in GENIE_TABLES:
-        print(f"   - {table}")
-    print("\n5. Add these instructions to the Genie Space:")
-    print("-" * 40)
-    print(GENIE_INSTRUCTIONS[:500] + "...")
-    print("-" * 40)
-    genie_space_id = None
+print("=" * 70)
+print("CREATE THE GENIE SPACE IN THE UI")
+print("=" * 70)
+print()
+print(f"1. Open:    {host}/genie?o=1444828305810485")
+print( "2. Click:   Create  →  Genie space")
+print()
+print( "3. Fill in the form:")
+print(f"   Title:        {GENIE_SPACE_NAME}")
+print( "   SQL warehouse: any Pro/Serverless warehouse (e.g. 862f1d757f0424f7)")
+print( "   Tables (Data):")
+for table in GENIE_TABLES:
+    print(f"     - {table}")
+print()
+print( "   Description (paste this):")
+print( "   " + "-" * 60)
+for line in GENIE_DESCRIPTION.strip().splitlines():
+    print(f"   {line}")
+print( "   " + "-" * 60)
+print()
+print( "4. After Save:  Settings → Instructions  →  paste:")
+print( "   " + "-" * 60)
+for line in GENIE_INSTRUCTIONS.strip().splitlines():
+    print(f"   {line}")
+print( "   " + "-" * 60)
+print()
+print( "5. Done. The workflow's refresh_genie_room task will find it by title on the next run.")
 
 # COMMAND ----------
 
