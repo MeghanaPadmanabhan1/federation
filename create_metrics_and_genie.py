@@ -169,12 +169,11 @@ print(f"\nTables: {', '.join(GENIE_TABLES)}")
 # MAGIC %md
 # MAGIC ## Step 3: Create (or find) the Genie Space
 # MAGIC
-# MAGIC Uses `POST /api/2.0/genie/spaces` with a `serialized_space` payload that follows
-# MAGIC the format documented at
-# MAGIC https://docs.databricks.com/aws/en/genie/conversation-api?language=Create+a+new+space.
+# MAGIC Calls the Databricks SDK's `w.genie.create_space(...)` with a `serialized_space`
+# MAGIC payload shaped per the docs:
+# MAGIC https://docs.databricks.com/aws/en/genie/conversation-api?language=Create+a+new+space
 # MAGIC
-# MAGIC The cell is idempotent — if a space with the same title already exists, it is
-# MAGIC reused; otherwise a new one is created.
+# MAGIC Idempotent — if a space with the same title already exists, it's reused.
 
 # COMMAND ----------
 
@@ -184,7 +183,8 @@ from databricks.sdk import WorkspaceClient
 w = WorkspaceClient()
 host = w.config.host
 
-# Pick a warehouse — try spark.conf, fall back to the first listed.
+# Pick a SQL warehouse for the space. Try the notebook's warehouse first; fall
+# back to listing if running on serverless (where spark.conf raises).
 try:
     warehouse_id = spark.conf.get("spark.databricks.warehouse.id", None)
 except Exception:
@@ -195,15 +195,21 @@ if not warehouse_id:
         raise RuntimeError("No SQL warehouse available to attach to the Genie space.")
     warehouse_id = warehouses[0].id
 
-# Look for an existing space with our title.
-existing = w.api_client.do("GET", "/api/2.0/genie/spaces")
-existing_match = next(
-    (s for s in (existing.get("spaces") or []) if s.get("title") == GENIE_SPACE_NAME),
+# If a space with this title already exists, reuse it.
+# Some runtime SDKs do not yet expose w.genie.list_spaces; fall back to REST.
+try:
+    list_resp = w.genie.list_spaces()
+    existing_spaces = [{"title": s.title, "space_id": s.space_id} for s in (list_resp.spaces or [])]
+except AttributeError:
+    existing_spaces = (w.api_client.do("GET", "/api/2.0/genie/spaces") or {}).get("spaces", [])
+
+existing = next(
+    (s for s in existing_spaces if s.get("title") == GENIE_SPACE_NAME),
     None,
 )
 
-if existing_match:
-    genie_space_id = existing_match.get("space_id") or existing_match.get("id")
+if existing:
+    genie_space_id = existing.get("space_id")
     print(f"Found existing Genie space: {genie_space_id}")
 else:
     serialized_space = {
@@ -241,14 +247,21 @@ else:
         },
     }
 
-    created = w.genie.create_space(
+    # Prefer the SDK method; fall back to REST if the runtime SDK is older.
+    create_kwargs = dict(
         warehouse_id=warehouse_id,
         serialized_space=json.dumps(serialized_space),
         title=GENIE_SPACE_NAME,
         description=GENIE_DESCRIPTION.strip().splitlines()[0],
         parent_path="/Users/meghana.padmanabhan@databricks.com",
     )
-    genie_space_id = created.space_id
+    try:
+        created = w.genie.create_space(**create_kwargs)
+        genie_space_id = created.space_id
+    except AttributeError:
+        created = w.api_client.do("POST", "/api/2.0/genie/spaces", body=create_kwargs)
+        genie_space_id = created.get("space_id") or created.get("id")
+
     print(f"Created Genie space: {genie_space_id}")
 
 print(f"  URL: {host}/genie/rooms/{genie_space_id}")
