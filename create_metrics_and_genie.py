@@ -172,8 +172,11 @@ from databricks.sdk import WorkspaceClient
 # Initialize workspace client
 w = WorkspaceClient()
 
-# Get current warehouse ID
-warehouse_id = spark.conf.get("spark.databricks.warehouse.id", None)
+# Get current warehouse ID — spark.conf raises on serverless compute, so guard.
+try:
+    warehouse_id = spark.conf.get("spark.databricks.warehouse.id", None)
+except Exception:
+    warehouse_id = None
 
 if not warehouse_id:
     # Try to get a warehouse
