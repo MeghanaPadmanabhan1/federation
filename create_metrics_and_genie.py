@@ -167,49 +167,92 @@ print(f"\nTables: {', '.join(GENIE_TABLES)}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 3: Create the Genie Space (manual, one-time)
+# MAGIC ## Step 3: Create (or find) the Genie Space
 # MAGIC
-# MAGIC **Databricks does not currently expose a from-scratch Genie space creation API.**
-# MAGIC The `create-space` REST/CLI/SDK only accepts a pre-exported `serialized_space`
-# MAGIC blob — it's an import path, not a constructor. So this step is UI-only.
+# MAGIC Uses `POST /api/2.0/genie/spaces` with a `serialized_space` payload that follows
+# MAGIC the format documented at
+# MAGIC https://docs.databricks.com/aws/en/genie/conversation-api?language=Create+a+new+space.
 # MAGIC
-# MAGIC Run the cell below to print the exact field values to paste into the
-# MAGIC Genie creation form, then follow the click-by-click in the output.
+# MAGIC The cell is idempotent — if a space with the same title already exists, it is
+# MAGIC reused; otherwise a new one is created.
 
 # COMMAND ----------
 
+import json
 from databricks.sdk import WorkspaceClient
 
 w = WorkspaceClient()
 host = w.config.host
 
-print("=" * 70)
-print("CREATE THE GENIE SPACE IN THE UI")
-print("=" * 70)
-print()
-print(f"1. Open:    {host}/genie?o=1444828305810485")
-print( "2. Click:   Create  →  Genie space")
-print()
-print( "3. Fill in the form:")
-print(f"   Title:        {GENIE_SPACE_NAME}")
-print( "   SQL warehouse: any Pro/Serverless warehouse (e.g. 862f1d757f0424f7)")
-print( "   Tables (Data):")
-for table in GENIE_TABLES:
-    print(f"     - {table}")
-print()
-print( "   Description (paste this):")
-print( "   " + "-" * 60)
-for line in GENIE_DESCRIPTION.strip().splitlines():
-    print(f"   {line}")
-print( "   " + "-" * 60)
-print()
-print( "4. After Save:  Settings → Instructions  →  paste:")
-print( "   " + "-" * 60)
-for line in GENIE_INSTRUCTIONS.strip().splitlines():
-    print(f"   {line}")
-print( "   " + "-" * 60)
-print()
-print( "5. Done. The workflow's refresh_genie_room task will find it by title on the next run.")
+# Pick a warehouse — try spark.conf, fall back to the first listed.
+try:
+    warehouse_id = spark.conf.get("spark.databricks.warehouse.id", None)
+except Exception:
+    warehouse_id = None
+if not warehouse_id:
+    warehouses = list(w.warehouses.list())
+    if not warehouses:
+        raise RuntimeError("No SQL warehouse available to attach to the Genie space.")
+    warehouse_id = warehouses[0].id
+
+# Look for an existing space with our title.
+existing = w.api_client.do("GET", "/api/2.0/genie/spaces")
+existing_match = next(
+    (s for s in (existing.get("spaces") or []) if s.get("title") == GENIE_SPACE_NAME),
+    None,
+)
+
+if existing_match:
+    genie_space_id = existing_match.get("space_id") or existing_match.get("id")
+    print(f"Found existing Genie space: {genie_space_id}")
+else:
+    serialized_space = {
+        "version": 2,
+        "config": {
+            "sample_questions": [
+                {"id": "a1b2c3d4e5f60001000000000000000a", "question": ["How is my portfolio projected to perform next year?"]},
+                {"id": "a1b2c3d4e5f60001000000000000000b", "question": ["Show me my high-risk holdings"]},
+                {"id": "a1b2c3d4e5f60001000000000000000c", "question": ["Which stocks have the highest growth potential?"]},
+                {"id": "a1b2c3d4e5f60001000000000000000d", "question": ["Which stocks should I consider selling?"]},
+                {"id": "a1b2c3d4e5f60001000000000000000e", "question": ["What is my total current annual earnings?"]},
+            ],
+        },
+        "data_sources": {
+            "tables": [
+                {
+                    "identifier": "mp_catalog.analytics.my_portfolio_dashboard",
+                    "description": ["Per-stock portfolio analytics: shares held, current and projected annual earnings, risk assessment, action recommendation. Federated on-prem holdings joined with FactSet fundamentals and estimates."],
+                }
+            ],
+            "metric_views": [
+                {
+                    "identifier": "mp_catalog.analytics.portfolio_metrics",
+                    "description": ["Unity Catalog Metric View over the portfolio. Use MEASURE() for Current Annual Earnings, Projected Annual Earnings, Portfolio Growth Rate, High Risk Count, Buy Opportunities, Sell Recommendations."],
+                }
+            ],
+        },
+        "instructions": {
+            "text_instructions": [
+                {
+                    "id": "01f0b37c378e1c9100000000000000a1",
+                    "content": [GENIE_INSTRUCTIONS.strip()],
+                }
+            ]
+        },
+    }
+
+    body = {
+        "title": GENIE_SPACE_NAME,
+        "description": GENIE_DESCRIPTION.strip().splitlines()[0],  # first line is enough
+        "parent_path": "/Users/meghana.padmanabhan@databricks.com",
+        "warehouse_id": warehouse_id,
+        "serialized_space": json.dumps(serialized_space),
+    }
+    created = w.api_client.do("POST", "/api/2.0/genie/spaces", body=body)
+    genie_space_id = created.get("space_id") or created.get("id")
+    print(f"Created Genie space: {genie_space_id}")
+
+print(f"  URL: {host}/genie/rooms/{genie_space_id}")
 
 # COMMAND ----------
 
