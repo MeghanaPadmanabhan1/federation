@@ -241,15 +241,14 @@ else:
         },
     }
 
-    body = {
-        "title": GENIE_SPACE_NAME,
-        "description": GENIE_DESCRIPTION.strip().splitlines()[0],  # first line is enough
-        "parent_path": "/Users/meghana.padmanabhan@databricks.com",
-        "warehouse_id": warehouse_id,
-        "serialized_space": json.dumps(serialized_space),
-    }
-    created = w.api_client.do("POST", "/api/2.0/genie/spaces", body=body)
-    genie_space_id = created.get("space_id") or created.get("id")
+    created = w.genie.create_space(
+        warehouse_id=warehouse_id,
+        serialized_space=json.dumps(serialized_space),
+        title=GENIE_SPACE_NAME,
+        description=GENIE_DESCRIPTION.strip().splitlines()[0],
+        parent_path="/Users/meghana.padmanabhan@databricks.com",
+    )
+    genie_space_id = created.space_id
     print(f"Created Genie space: {genie_space_id}")
 
 print(f"  URL: {host}/genie/rooms/{genie_space_id}")
