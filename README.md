@@ -1,458 +1,68 @@
-# Lakehouse Federation with FactSet Demo
+# Lakehouse Federation + FactSet Demo
 
-## 📋 Overview
+Combine **on-premise portfolio holdings** with **FactSet financial data** from the Databricks Marketplace — without moving any portfolio data to the cloud. The on-prem holdings stay in SQL Server; Databricks queries them live via Lakehouse Federation and joins them with FactSet fundamentals + estimates to produce investment analytics, an AI/BI dashboard, and a Genie space.
 
-This repository contains a complete demonstration of **Databricks Lakehouse Federation** combined with **FactSet financial data** from the Databricks Marketplace. It showcases how to query on-premise portfolio data **without moving it** and join it with FactSet fundamentals and estimates for real-time investment analysis.
+## What's in this repo
 
-### Key Message
-**You don't need to physically move secure data into Databricks to analyze it.**
+| File | Role |
+|---|---|
+| `blog.ipynb` | The blog post |
+| `generate_sample_holdings.py` | Generates `~/equity_holdings.csv` + the SQL Server DDL you'll need |
+| `create_metrics_and_genie.py` | One-time setup: creates the UC Metric View `portfolio_metrics` and the Genie space |
+| `portfolio_dashboard.lvdash.json` | The AI/BI dashboard definition |
+| `jobs/` | Seven notebook tasks that make up the operational workflow |
 
----
+## Prerequisites
 
-## 🎯 Use Case
+- A Databricks workspace with Unity Catalog enabled
+- The **FactSet** data product installed from Databricks Marketplace, exposed as the `mp_factset_data` catalog (or update the catalog name in `jobs/join_portfolio_with_factset` and `create_metrics_and_genie`)
+- A Microsoft SQL Server instance reachable from your Databricks workspace
+- A SQL warehouse to run the workflow (the workflow currently uses `862f1d757f0424f7` — update if needed)
 
-### The Scenario
-A financial services firm has:
-- **Customer portfolio data** in an on-premise SQL Server (ticker symbols, shares held, cost basis)
-- **FactSet financial data** available via Databricks Marketplace (fundamentals, estimates)
-- **Security/compliance requirements** preventing portfolio data from moving to the cloud
+## How to run
 
-### The Challenge
-- FactSet uses **FactSet Sim ID** (unique identifier), not standard ticker symbols
-- Need to combine on-premise portfolio with cloud-based FactSet data
-- Must maintain data security and compliance
+### 1. Generate sample portfolio data
+Run `generate_sample_holdings.py` (in Databricks or local Python — no dependencies). It writes `~/equity_holdings.csv` (200 rows, real US tickers) and prints the SQL Server `CREATE TABLE dbo.equity_holdings` DDL.
 
-### The Solution
-**Lakehouse Federation** allows querying on-premise data in place and joining it with FactSet data through a symbology mapping table.
+### 2. Load the CSV into your on-prem SQL Server
+Run the DDL printed in Step 1 to create `dbo.equity_holdings`, then bulk-load the CSV into it (use `BULK INSERT`, `bcp`, the SSMS Import Wizard, or whatever fits your environment).
 
-```
-Portfolio (ticker)  →  Symbology (ticker → ID)  →  FactSet Data (ID)
-  [On-Premise]            [Databricks]                [Databricks]
-       ↓                       ↓                           ↓
-  STAYS THERE            Maps ticker              Fundamentals +
-  (federated)            to FactSet ID               Estimates
-```
-
----
-
-## 📁 Repository Structure
-
-### Core Demo Notebooks
-
-1. **`factset_federation_demo.py`** ⭐ **PRIMARY DEMO**
-   - Complete end-to-end demonstration
-   - Shows the three-way join pattern (Portfolio → Symbology → FactSet)
-   - Includes fundamentals + estimates analysis
-   - Investment decision support examples
-   - **Use this for technical demos and blog content**
-
-### Setup Guide
-
-2. ** SETUP GUIDE **
-   - setup guide
-   - Includes instructions to setup connectivity to on-prem azure sql database
-
-### Reference Documents
-
-3. **`FACTSET_QUICK_REFERENCE.md`** ⭐ **KEY REFERENCE**
-   - FactSet-specific join patterns
-   - Symbology table usage
-   - Common query patterns
-   - Troubleshooting guide
-   - **Keep this handy during development**
-
-4. **`QUICK_REFERENCE.md`**
-   - General federation commands
-   - Connection setup
-   - Performance optimization
-   - Common troubleshooting
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-1. **Databricks Workspace** (Azure, AWS, or GCP)
-   - Unity Catalog enabled
-   - Permissions to create connections and catalogs
-
-2. **FactSet Data** from Databricks Marketplace
-   - Install from Marketplace with your FactSet license
-   - Note the catalog name (e.g., `factset_catalog`)
-
-3. **SQL Database** (on-premise or cloud)
-   - Azure SQL, SQL Server, PostgreSQL, etc.
-   - Network connectivity from Databricks
-   - Credentials with SELECT permissions
-
-### Step 1: Generate Sample Holdings Data
-
-Run **`generate_sample_holdings.py`** (in Databricks or any local Python 3 environment — no SDK or extra packages required). It produces:
-
-- `~/equity_holdings.csv` — 200 rows of synthetic equity positions using real US tickers, matching the schema this demo expects.
-- A `CREATE TABLE dbo.equity_holdings (...)` DDL block printed to stdout.
-
-```bash
-python3 generate_sample_holdings.py
-```
-
-### Step 2: Load the Sample Data into Your On-Premise SQL Server
-
-In your on-prem Microsoft SQL Server:
-
-1. Run the `CREATE TABLE dbo.equity_holdings` DDL printed by Step 1.
-2. Bulk-load `equity_holdings.csv` into that table (use whatever tool your environment supports — `BULK INSERT`, `bcp`, the SSMS Import Wizard, Azure Data Studio import, etc.). The CSV has a header row and three columns matching the table definition.
-
-The point of these two steps is just to get a `dbo.equity_holdings` table populated in your SQL Server so the rest of the demo has something to federate over. We deliberately don't prescribe the load mechanism — use whatever fits your environment.
-
-### Step 3: Configure Databricks Secrets
-
-```bash
-# Create secret scope
-databricks secrets create-scope --scope onprem-secrets
-
-# Add password
-databricks secrets put-secret \
-  --scope onprem-secrets \
-  --key sql-password \
-  --string-value "your-password"
-```
-
-### Step 4: Upload Demo Notebook
-
-1. Upload `factset_federation_demo.py` to your Databricks workspace
-2. Attach to a cluster with Unity Catalog enabled
-3. Update connection parameters:
-   - SQL Server host
-   - Database name
-   - Secret scope name
-   - FactSet catalog name
-
-### Step 5: Run the Demo
-
-Open the notebook and execute cells in order. The notebook will:
-1. Create a connection to your on-premise database
-2. Create a foreign catalog for federated access
-3. Query portfolio data (stays on-premise)
-4. Map tickers to FactSet IDs using symbology table
-5. Join with FactSet fundamentals and estimates
-6. Generate investment insights
-
----
-
-## 🔑 Key Concepts
-
-### What is Lakehouse Federation?
-
-Lakehouse Federation allows Databricks to query external data sources **without moving the data**. Data stays in its original location while you can query it using standard SQL.
-
-### The FactSet Challenge
-
-FactSet data uses **FactSet Entity IDs** instead of ticker symbols:
-
+### 3. Federate the SQL Server table into Databricks
+In Databricks, create a SQL Server connection and a foreign catalog so the on-prem table appears as `mp_portfolio_federated.dbo.equity_holdings`:
 ```sql
--- ❌ This won't work - no ticker column
-SELECT *
-FROM factset_catalog.ff_basic.ff_basic_af
-WHERE ticker = 'MSFT';
+CREATE CONNECTION onprem_sql_connection
+  TYPE sqlserver
+  OPTIONS (
+    host '<your-sql-server-host>',
+    port '1433',
+    user '<username>',
+    password secret('<scope>', '<key>')
+  );
 
--- ✅ Must use factset_entity_id
-SELECT *
-FROM factset_catalog.ff_basic.ff_basic_af
-WHERE factset_entity_id = '0016YD-E';
+CREATE FOREIGN CATALOG mp_portfolio_federated
+  USING CONNECTION onprem_sql_connection
+  OPTIONS (database '<your-database>');
 ```
+Store the SQL Server password in a Databricks secret scope first.
 
-### The Solution: Symbology Table
+### 4. Run `create_metrics_and_genie` (one-time)
+Open the notebook and run it once. It creates the `mp_catalog.analytics.portfolio_metrics` Metric View and the Genie space *Personal Investment Portfolio Assistant*.
 
-The symbology table maps tickers to FactSet IDs:
-
-```sql
-SELECT ticker, factset_entity_id, proper_name
-FROM factset_catalog.sym_basic.sym_coverage
-WHERE ticker = 'MSFT';
-
--- Output:
--- ticker: MSFT
--- factset_entity_id: 0016YD-E
--- proper_name: Microsoft Corporation
+### 5. Run the workflow
+Trigger the **`Portfolio Federation Pipeline`** job (job ID `796814768384996`). The seven `jobs/*` tasks execute in this order:
 ```
-
-### The Three-Way Join
-
-```sql
-SELECT
-  portfolio.ticker_symbol,
-  symbology.proper_name,
-  portfolio.shares_held,
-  factset.revenue,
-  factset.net_income
-FROM onprem.dbo.customer_holdings AS portfolio
-JOIN factset.sym_basic.sym_coverage AS symbology
-  ON portfolio.ticker_symbol = symbology.ticker
-JOIN factset.ff_basic.ff_basic_af AS factset
-  ON symbology.factset_entity_id = factset.factset_entity_id
-WHERE factset.fiscal_year = 2023;
+read_factset_from_marketplace ──┐
+                                ├─► join_portfolio_with_factset ─┬─► build_dashboard_views ─► refresh_aibi_dashboard
+read_portfolio_from_onprem ─────┘                                └─► refresh_metric_view ───► refresh_genie_room
 ```
+On success the workflow creates eight views under `mp_catalog.analytics.*` (one base join + seven derived dashboard views) and republishes the dashboard.
 
----
+### 6. View the result
+- **Dashboard** — Workspace → Dashboards → *portfolio_dashboard*
+- **Genie** — Workspace → Genie → *Personal Investment Portfolio Assistant*
 
-## 📊 Demo Highlights
+## Notes
 
-### 1. No Data Movement
-Portfolio data stays in the on-premise SQL Server throughout the entire analysis.
-
-### 2. Real-Time Insights
-Queries execute against live data - no ETL lag.
-
-### 3. Unified Analytics
-Single interface (SQL/PySpark) to query both federated and managed data.
-
-### 4. Investment Decisions
-Combine historical performance with forward-looking analyst estimates:
-- Portfolio holdings (on-prem)
-- FactSet fundamentals (historical)
-- FactSet estimates (forward-looking)
-= Investment recommendations
-
-### 5. Security Maintained
-Sensitive customer data never leaves the approved, compliant database.
-
----
-
-## 💡 Use Cases
-
-### Financial Services
-- Portfolio analysis with market data
-- Risk assessment across holdings
-- Client reporting with FactSet insights
-- Compliance reporting without data movement
-
-### Wealth Management
-- Personalized investment recommendations
-- Portfolio rebalancing suggestions
-- Performance attribution analysis
-- Tax-loss harvesting opportunities
-
-### Hedge Funds
-- Multi-strategy portfolio analysis
-- Factor exposure analysis
-- Alpha generation insights
-- Real-time risk monitoring
-
----
-
-## 🔧 Customization Guide
-
-### Update Connection Parameters
-
-In the notebook, modify these values:
-
-```python
-# Connection details
-host = "your-server.database.windows.net"
-database = "PortfolioDB"
-user = "your-username"
-secret_scope = "onprem-secrets"
-secret_key = "sql-password"
-
-# FactSet catalog name
-factset_catalog = "factset_catalog"  # or your catalog name
-```
-
-### Add Your Own Tickers
-
-Edit `onprem_portfolio_setup.sql` and add your ticker symbols:
-
-```sql
-INSERT INTO dbo.customer_holdings (customer_id, ticker_symbol, shares_held, cost_basis, purchase_date, account_type, account_number)
-VALUES
-    (1008, 'YOUR_TICKER', 100.0000, 150.0000, '2024-01-15', 'Brokerage', 'BRK-1008-001');
-```
-
-### Extend the Analysis
-
-Add more FactSet tables:
-- `ff_basic.ff_basic_qf` - Quarterly financials
-- `fe_basic.fe_basic_sales` - Sales estimates
-- `fe_basic.fe_basic_rec` - Analyst recommendations
-
----
-
-## 📈 Performance Optimization
-
-### 1. Predicate Pushdown
-Filters are automatically pushed to the source database:
-
-```sql
--- Filter executes in SQL Server, not Databricks
-SELECT *
-FROM portfolio_federated.dbo.customer_holdings
-WHERE customer_id = 1001;  -- Pushed down
-```
-
-### 2. Projection Pushdown
-Only selected columns are transferred:
-
-```sql
--- Only transfers 2 columns, not all
-SELECT ticker_symbol, shares_held
-FROM portfolio_federated.dbo.customer_holdings;
-```
-
-### 3. Cache Frequently Used Tables
-
-```python
-# Cache symbology for repeated joins
-sym = spark.table("factset_catalog.sym_basic.sym_coverage")
-sym.cache()
-```
-
-### 4. Index Your On-Prem Tables
-
-```sql
--- On SQL Server
-CREATE INDEX IX_ticker ON customer_holdings(ticker_symbol);
-CREATE INDEX IX_customer ON customer_holdings(customer_id);
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Connection Issues
-
-```sql
--- Test connection
-SHOW CONNECTIONS;
-
--- Check connection details
-DESCRIBE CONNECTION onprem_sql_connection;
-```
-
-### No Results from Join
-
-```sql
--- Verify tickers exist in symbology
-SELECT ticker
-FROM factset_catalog.sym_basic.sym_coverage
-WHERE ticker IN (
-  SELECT DISTINCT ticker_symbol
-  FROM portfolio_federated.dbo.customer_holdings
-);
-```
-
-### Slow Queries
-
-```sql
--- Check query plan
-EXPLAIN FORMATTED
-SELECT *
-FROM portfolio_federated.dbo.customer_holdings
-WHERE customer_id = 1001;
-
--- Look for "Scan JDBCRelation" (good)
--- Look for predicate pushdown (good)
-```
-
----
-
-## 📚 Additional Resources
-
-### Databricks Documentation
-- [Lakehouse Federation](https://docs.databricks.com/query-federation/)
-- [Unity Catalog](https://docs.databricks.com/data-governance/unity-catalog/)
-- [Foreign Catalogs](https://docs.databricks.com/query-federation/index.html)
-
-### FactSet Documentation
-- [FactSet on Databricks Marketplace](https://marketplace.databricks.com/)
-- Browse FactSet schema documentation in the Marketplace listing
-
-### Best Practices
-- See `FACTSET_QUICK_REFERENCE.md` for query patterns
-- See `SETUP_GUIDE.md` for architecture guidance
-- See `QUICK_REFERENCE.md` for general federation tips
-
----
-
-## 🎯 Blog Messaging
-
-### Key Points for Your Blog
-
-1. **The Problem**
-   - Regulated industries have data in approved, secure systems
-   - Want to combine with cloud analytics (FactSet)
-   - Can't move data due to security/compliance
-
-2. **The Solution**
-   - Lakehouse Federation queries data in place
-   - No ETL, no data movement
-   - Unified SQL interface
-
-3. **The FactSet Twist**
-   - FactSet uses entity IDs, not tickers
-   - Symbology table provides the mapping
-   - Three-way join enables seamless integration
-
-4. **The Value**
-   - Security: Data stays in approved locations
-   - Compliance: No additional governance burden
-   - Cost: No duplication or transfer fees
-   - Agility: Real-time insights without pipelines
-
-### Target Audience
-- **Financial services IT leaders** concerned about data governance
-- **Data engineers** managing hybrid architectures
-- **Portfolio managers** wanting FactSet insights
-- **Compliance officers** evaluating cloud solutions
-
----
-
-## 🤝 Contributing
-
-To extend this demo:
-
-1. Add more FactSet schemas (FE estimates, FF fundamentals)
-2. Include other data sources (Snowflake, PostgreSQL, etc.)
-3. Create additional dashboard examples
-4. Add MLflow integration for predictive models
-
----
-
-## 📧 Support
-
-For questions or issues:
-- Databricks Federation: [Documentation](https://docs.databricks.com/query-federation/)
-- FactSet Data: Databricks Marketplace support
-- General setup: See `SETUP_GUIDE.md`
-
----
-
-## ✅ Checklist
-
-Use this checklist to ensure your demo is ready:
-
-- [ ] On-premise database set up with portfolio data
-- [ ] FactSet data accessible from Databricks Marketplace
-- [ ] Databricks secrets configured with SQL password
-- [ ] Network connectivity verified (Databricks → SQL Server)
-- [ ] Connection and foreign catalog created
-- [ ] Symbology table accessible
-- [ ] Can query portfolio data (federated)
-- [ ] Can join portfolio with FactSet data
-- [ ] Demo notebook runs end-to-end
-- [ ] Dashboard view created successfully
-
----
-
-## 📄 License
-
-This demo code is provided for educational and demonstration purposes.
-
-**FactSet Data:** Requires a valid FactSet license and Databricks Marketplace agreement.
-
----
-
-**Ready to demonstrate Lakehouse Federation with FactSet?**
-
-Start with `factset_federation_demo.py` and the `FACTSET_QUICK_REFERENCE.md`! 🚀
+- **No federated data is materialized.** Every `mp_catalog.analytics.*` object is a plain `VIEW`, so on-prem holdings are queried live on each dashboard load or pipeline run.
+- The workflow is idempotent; rerunning it is safe.
+- If your portfolio's totals look skewed by a few extreme rows, see the EPS sanity filters in `jobs/join_portfolio_with_factset` (`ABS(FF_EPS_BASIC) < 50`, `FF_SALES > 0`).
