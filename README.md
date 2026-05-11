@@ -37,35 +37,30 @@ Portfolio (ticker)  →  Symbology (ticker → ID)  →  FactSet Data (ID)
 
 ## 📁 Repository Structure
 
-### Core Demo Notebooks
+### Setup runbook
 
-1. **`factset_federation_demo.py`** ⭐ **PRIMARY DEMO**
-   - Complete end-to-end demonstration
-   - Shows the three-way join pattern (Portfolio → Symbology → FactSet)
-   - Includes fundamentals + estimates analysis
-   - Investment decision support examples
-   - **Use this for technical demos and blog content**
+1. **`SETUP_GUIDE.md`** ⭐ **READ THIS FIRST**
+   - The single end-to-end runbook. Walks through generating sample data, loading it into your on-prem SQL Server, installing FactSet from Marketplace, creating the federation connection and foreign catalog, deploying the notebooks, running the workflow, importing the dashboard, and verification queries.
 
-### Setup Guide
+### Notebooks
 
-2. ** SETUP GUIDE **
-   - setup guide
-   - Includes instructions to setup connectivity to on-prem azure sql database
+2. **`generate_sample_holdings.py`**
+   - Produces `~/equity_holdings.csv` plus the SQL Server `CREATE TABLE dbo.equity_holdings` DDL.
 
-### Reference Documents
+3. **`create_metrics_and_genie.py`**
+   - One-time setup: creates the `mp_catalog.analytics.portfolio_metrics` Metric View and the Genie space *Personal Investment Portfolio Assistant*.
 
-3. **`FACTSET_QUICK_REFERENCE.md`** ⭐ **KEY REFERENCE**
-   - FactSet-specific join patterns
-   - Symbology table usage
-   - Common query patterns
-   - Troubleshooting guide
-   - **Keep this handy during development**
+4. **`jobs/`** — seven notebooks orchestrated by the **Portfolio Federation Pipeline** workflow:
+   - `read_factset_from_marketplace`, `read_portfolio_from_onprem_sql_server`
+   - `join_portfolio_with_factset` — the core federation join, defined as a non-materialized VIEW
+   - `build_dashboard_views` — all derived dashboard views
+   - `refresh_metric_view`, `refresh_aibi_dashboard`, `refresh_genie_room`
 
-4. **`QUICK_REFERENCE.md`**
-   - General federation commands
-   - Connection setup
-   - Performance optimization
-   - Common troubleshooting
+5. **`blog.ipynb`** — the companion blog post.
+
+### Dashboard
+
+6. **`portfolio_dashboard.lvdash.json`** — the AI/BI dashboard definition.
 
 ---
 
@@ -86,20 +81,27 @@ Portfolio (ticker)  →  Symbology (ticker → ID)  →  FactSet Data (ID)
    - Network connectivity from Databricks
    - Credentials with SELECT permissions
 
-### Step 1: Set Up On-Premise Database
+### Step 1: Generate Sample Holdings Data
+
+Run **`generate_sample_holdings.py`** (in Databricks or any local Python 3 environment — no SDK or extra packages required). It produces:
+
+- `~/equity_holdings.csv` — 200 rows of synthetic equity positions using real US tickers, matching the schema this demo expects.
+- A `CREATE TABLE dbo.equity_holdings (...)` DDL block printed to stdout.
 
 ```bash
-# Run the portfolio setup script in your SQL Server
-sqlcmd -S your-server.database.windows.net \
-       -d PortfolioDB \
-       -U your-username \
-       -P your-password \
-       -i onprem_portfolio_setup.sql
+python3 generate_sample_holdings.py
 ```
 
-Or execute `onprem_portfolio_setup.sql` in Azure Data Studio / SSMS.
+### Step 2: Load the Sample Data into Your On-Premise SQL Server
 
-### Step 2: Configure Databricks Secrets
+In your on-prem Microsoft SQL Server:
+
+1. Run the `CREATE TABLE dbo.equity_holdings` DDL printed by Step 1.
+2. Bulk-load `equity_holdings.csv` into that table (use whatever tool your environment supports — `BULK INSERT`, `bcp`, the SSMS Import Wizard, Azure Data Studio import, etc.). The CSV has a header row and three columns matching the table definition.
+
+The point of these two steps is just to get a `dbo.equity_holdings` table populated in your SQL Server so the rest of the demo has something to federate over. We deliberately don't prescribe the load mechanism — use whatever fits your environment.
+
+### Step 3: Configure Databricks Secrets
 
 ```bash
 # Create secret scope
@@ -112,9 +114,9 @@ databricks secrets put-secret \
   --string-value "your-password"
 ```
 
-### Step 3: Upload Demo Notebook
+### Step 4: Upload Demo Notebook
 
-1. Upload `factset_federation_demo.py` to your Databricks workspace
+1. Upload the `jobs/` notebooks (and `create_metrics_and_genie.py`) to your Databricks workspace, or clone this repo as a Git folder
 2. Attach to a cluster with Unity Catalog enabled
 3. Update connection parameters:
    - SQL Server host
@@ -122,7 +124,7 @@ databricks secrets put-secret \
    - Secret scope name
    - FactSet catalog name
 
-### Step 4: Run the Demo
+### Step 5: Run the Demo
 
 Open the notebook and execute cells in order. The notebook will:
 1. Create a connection to your on-premise database
@@ -210,49 +212,6 @@ Combine historical performance with forward-looking analyst estimates:
 
 ### 5. Security Maintained
 Sensitive customer data never leaves the approved, compliant database.
-
----
-
-## 🎬 5-Minute Demo Script
-
-Use this script for live demonstrations:
-
-```sql
--- 1. Show on-prem portfolio (30 sec)
-SELECT * FROM portfolio_federated.dbo.customer_holdings LIMIT 5;
-
--- 2. Show FactSet uses IDs (30 sec)
-SELECT * FROM factset_catalog.ff_basic.ff_basic_af LIMIT 5;
-
--- 3. Show symbology mapping (30 sec)
-SELECT ticker, factset_entity_id, proper_name
-FROM factset_catalog.sym_basic.sym_coverage
-WHERE ticker IN ('MSFT', 'AAPL');
-
--- 4. The three-way join (2 min)
-SELECT
-  p.customer_id,
-  p.ticker_symbol,
-  s.proper_name,
-  p.shares_held * p.cost_basis AS position_value,
-  f.net_income,
-  e.mean_estimate AS eps_est_2024
-FROM portfolio_federated.dbo.customer_holdings p
-JOIN factset_catalog.sym_basic.sym_coverage s
-  ON p.ticker_symbol = s.ticker
-JOIN factset_catalog.ff_basic.ff_basic_af f
-  ON s.factset_entity_id = f.factset_entity_id
-JOIN factset_catalog.fe_basic.fe_basic_eps e
-  ON s.factset_entity_id = e.factset_entity_id
-WHERE f.fiscal_year = 2023 AND e.fiscal_year = 2024
-ORDER BY position_value DESC
-LIMIT 10;
-
--- 5. Explain the value (1 min)
--- "Portfolio data NEVER moved"
--- "Queried in place using Lakehouse Federation"
--- "Combined with FactSet for real-time insights"
-```
 
 ---
 
@@ -405,9 +364,7 @@ WHERE customer_id = 1001;
 - Browse FactSet schema documentation in the Marketplace listing
 
 ### Best Practices
-- See `FACTSET_QUICK_REFERENCE.md` for query patterns
-- See `SETUP_GUIDE.md` for architecture guidance
-- See `QUICK_REFERENCE.md` for general federation tips
+- See `SETUP_GUIDE.md` for the full end-to-end runbook (federation connection, FactSet install, workflow setup, dashboard import, troubleshooting).
 
 ---
 
@@ -491,4 +448,4 @@ This demo code is provided for educational and demonstration purposes.
 
 **Ready to demonstrate Lakehouse Federation with FactSet?**
 
-Start with `factset_federation_demo.py` and the `FACTSET_QUICK_REFERENCE.md`! 🚀
+Start with `SETUP_GUIDE.md` and follow it end to end. 🚀
