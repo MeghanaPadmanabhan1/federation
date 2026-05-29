@@ -37,30 +37,70 @@ Portfolio (ticker)  →  Symbology (ticker → ID)  →  FactSet Data (ID)
 
 ## 📁 Repository Structure
 
+The workspace is organized to mirror the blog's step structure. Use the map below to jump from any blog step to the corresponding asset in this workspace.
+
+### 🗺️ Blog Step → Workspace Asset
+
+| Blog step | Workspace asset |
+| :-- | :-- |
+| Setup (prerequisite data) | `generate_sample_holdings.py` |
+| Step 1a — Set Up the Federated Connection | UI-driven, see `SETUP_GUIDE.md` |
+| Step 1b — Create a Foreign Catalog | UI-driven, see `SETUP_GUIDE.md` |
+| Step 1c — Subscribe to FactSet from the Marketplace | UI-driven, see `SETUP_GUIDE.md` |
+| **Step 2a — Explore the Combined Data with SQL** | **`step_2a_ad_hoc_queries/`** (also saved as DBSQL queries in the SQL editor) |
+| **Step 2b — Productionize with a Declarative SQL Pipeline** | **`sdp/portfolio_pipeline.sql`** (defines the Lakeflow Declarative Pipeline) |
+| Step 2 (LEGACY) — Combine the Data using Lakeflow Jobs + Spark | `jobs/` (original implementation, kept for reference) |
+| Step 3 — Build the Semantic Layer with Metric Views | `create_metrics_and_genie.py` (Part 1) |
+| Step 4 — Create the Investment Dashboard | `portfolio_dashboard.lvdash.json` |
+| Step 5 — Enable Natural Language Queries with Genie | `create_metrics_and_genie.py` (Part 2) |
+
 ### Setup runbook
 
 1. **`SETUP_GUIDE.md`** ⭐ **READ THIS FIRST**
    - The single end-to-end runbook. Walks through generating sample data, loading it into your on-prem SQL Server, installing FactSet from Marketplace, creating the federation connection and foreign catalog, deploying the notebooks, running the workflow, importing the dashboard, and verification queries.
 
-### Notebooks
+### Setup (prerequisite data)
 
 2. **`generate_sample_holdings.py`**
-   - Produces `~/equity_holdings.csv` plus the SQL Server `CREATE TABLE dbo.equity_holdings` DDL.
+   - Produces `~/equity_holdings.csv` plus the SQL Server `CREATE TABLE dbo.equity_holdings` DDL. Run this once before Step 1 to populate the on-premise source the rest of the demo federates over.
 
-3. **`create_metrics_and_genie.py`**
-   - One-time setup: creates the `mp_catalog.analytics.portfolio_metrics` Metric View and the Genie space *Personal Investment Portfolio Assistant*.
+### Step 2a — Ad-hoc SQL exploration
 
-4. **`jobs/`** — seven notebooks orchestrated by the **Portfolio Federation Pipeline** workflow:
+3. **`step_2a_ad_hoc_queries/`** — seven SQL notebooks demonstrating how an asset manager can join federated on-prem holdings with Marketplace-shared FactSet data using nothing but SQL. Each notebook mirrors a saved DBSQL query of the same name (accessible from the SQL editor sidebar).
+   - `01_whats_in_my_book` — pure federated read of the on-prem portfolio
+   - `02_how_concentrated_is_my_book` — cumulative concentration with window functions, pushed down to the federated source
+   - `03_where_is_my_annual_earnings_coming_from` — federated × Marketplace, ranks holdings by annual earnings contribution
+   - `04_whats_my_projected_upside` — federated + fundamentals + estimates joined live; expected earnings increase per holding
+   - `05_which_positions_flagged_for_review` — morning triage list across federated + Marketplace
+   - `06_where_are_my_analyst_coverage_gaps` — coverage and consensus dispersion per holding
+   - `07_federated_plus_marketplace_in_one_select` — the blog hero query: one SELECT, two completely different origins
+
+### Step 2b — Declarative SQL pipeline
+
+4. **`sdp/portfolio_pipeline.sql`** — Lakeflow Declarative Pipeline definition. Two source views (`src_portfolio_onprem`, `src_factset_marketplace`) feed one base join (`my_portfolio_dashboard`), which fans out to seven downstream materialized views for the dashboard and Genie consumers.
+
+### Step 2 (LEGACY) — Lakeflow Jobs + Spark approach
+
+5. **`jobs/`** — seven notebooks orchestrated by the **Portfolio Federation Pipeline** workflow. The original implementation, kept for reference; the SDP in Step 2b is the recommended approach for the asset manager persona because it stays in SQL end-to-end.
    - `read_factset_from_marketplace`, `read_portfolio_from_onprem_sql_server`
    - `join_portfolio_with_factset` — the core federation join, defined as a non-materialized VIEW
    - `build_dashboard_views` — all derived dashboard views
    - `refresh_metric_view`, `refresh_aibi_dashboard`, `refresh_genie_room`
 
-5. **`blog.ipynb`** — the companion blog post.
+### Step 3 + Step 5 — Semantic layer & natural language
 
-### Dashboard
+6. **`create_metrics_and_genie.py`**
+   - One-time setup: creates the `mp_catalog.analytics.portfolio_metrics` Metric View (Step 3) and the Genie space *Personal Investment Portfolio Assistant* (Step 5).
 
-6. **`portfolio_dashboard.lvdash.json`** — the AI/BI dashboard definition.
+### Step 4 — Dashboard
+
+7. **`portfolio_dashboard.lvdash.json`** — the AI/BI dashboard definition.
+
+### Blog source
+
+8. **`blog.ipynb`** — the companion blog post.
+
+> **Note on folder naming.** The workspace's `Move` API is currently disabled in this deployment, so the legacy folder names (`jobs/`, `sdp/`) cannot be renamed to add `step_X` prefixes without recreating them. The mapping table above is the canonical reference for which blog step each folder serves. The new `step_2a_ad_hoc_queries/` folder uses the prefixed naming directly.
 
 ---
 
