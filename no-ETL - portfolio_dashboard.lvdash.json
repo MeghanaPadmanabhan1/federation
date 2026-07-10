@@ -43,23 +43,6 @@
       "layout": [
         {
           "widget": {
-            "name": "title",
-            "multilineTextboxSpec": {
-              "lines": [
-                "## no-ETL - Personal Investment Portfolio",
-                "Every widget queries the on-prem SQL Server (via Lakehouse Federation) and FactSet (via Marketplace) live. No workflow, no views, no persisted objects."
-              ]
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 0,
-            "width": 6,
-            "height": 2
-          }
-        },
-        {
-          "widget": {
             "name": "total-holdings",
             "queries": [
               {
@@ -93,7 +76,7 @@
           },
           "position": {
             "x": 0,
-            "y": 2,
+            "y": 0,
             "width": 2,
             "height": 3
           }
@@ -133,7 +116,7 @@
           },
           "position": {
             "x": 2,
-            "y": 2,
+            "y": 0,
             "width": 2,
             "height": 3
           }
@@ -173,7 +156,7 @@
           },
           "position": {
             "x": 4,
-            "y": 2,
+            "y": 0,
             "width": 2,
             "height": 3
           }
@@ -213,7 +196,7 @@
           },
           "position": {
             "x": 0,
-            "y": 5,
+            "y": 3,
             "width": 2,
             "height": 5
           }
@@ -266,7 +249,7 @@
           },
           "position": {
             "x": 2,
-            "y": 5,
+            "y": 3,
             "width": 2,
             "height": 5
           }
@@ -319,7 +302,7 @@
           },
           "position": {
             "x": 4,
-            "y": 5,
+            "y": 3,
             "width": 2,
             "height": 5
           }
@@ -388,7 +371,7 @@
           },
           "position": {
             "x": 0,
-            "y": 10,
+            "y": 8,
             "width": 6,
             "height": 6
           }
@@ -494,7 +477,7 @@
           },
           "position": {
             "x": 0,
-            "y": 16,
+            "y": 14,
             "width": 6,
             "height": 12
           }
