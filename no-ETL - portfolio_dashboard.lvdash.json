@@ -1,0 +1,266 @@
+{
+  "datasets": [
+    {
+      "name": "portfolio_summary",
+      "displayName": "Portfolio Summary (no-ETL)",
+      "queryLines": [
+        "WITH portfolio AS (",
+        "  SELECT symbol, UPPER(symbol) AS ticker_region, number_of_shares AS shares_held",
+        "  FROM mp_portfolio_federated.dbo.equity_holdings WHERE instrument_type = 'Equity'",
+        "),",
+        "fundamentals AS (",
+        "  SELECT a.ticker_region, c.FF_NET_INCOME AS net_income, c.FF_EPS_BASIC AS current_eps,",
+        "         ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct,",
+        "         ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity_ratio",
+        "  FROM mp_factset_data.sym_v1.sym_ticker_region a",
+        "  JOIN mp_factset_data.ff_v3.ff_sec_map         b ON a.fsym_id = b.fsym_id",
+        "  JOIN mp_factset_data.ff_v3.ff_basic_af        c ON b.fsym_company_id = c.fsym_id",
+        "  WHERE c.DATE >= '2023-01-01' AND c.FF_EPS_BASIC IS NOT NULL AND ABS(c.FF_EPS_BASIC) < 50 AND c.FF_SALES > 0",
+        "  QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1",
+        "),",
+        "estimates AS (",
+        "  SELECT a.ticker_region, c.FE_MEAN AS forward_eps",
+        "  FROM mp_factset_data.sym_v1.sym_ticker_region a",
+        "  JOIN mp_factset_data.fe_v4.fe_sec_map         b ON a.fsym_id = b.fsym_id",
+        "  JOIN mp_factset_data.fe_v4.fe_basic_conh_af   c ON b.fsym_company_id = c.fsym_id",
+        "  WHERE c.FE_ITEM = 'EPS' AND c.CONS_END_DATE IS NULL AND c.FE_FP_END >= CURRENT_DATE() AND ABS(c.FE_MEAN) < 50",
+        "  QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1",
+        ")",
+        "SELECT COUNT(*) AS total_holdings,",
+        "       ROUND(SUM(p.shares_held * f.current_eps), 2) AS total_current_earnings,",
+        "       ROUND(SUM(p.shares_held * e.forward_eps), 2) AS total_projected_earnings,",
+        "       SUM(CASE WHEN f.net_income < 0 OR f.debt_to_equity_ratio > 2.5 THEN 1 ELSE 0 END) AS high_risk_stocks",
+        "FROM portfolio p JOIN fundamentals f ON p.ticker_region = f.ticker_region",
+        "LEFT JOIN estimates e ON p.ticker_region = e.ticker_region"
+      ]
+    },
+    {
+      "name": "risk_distribution",
+      "displayName": "Risk Distribution (no-ETL)",
+      "queryLines": [
+        "WITH portfolio AS (",
+        "  SELECT symbol, UPPER(symbol) AS ticker_region, number_of_shares AS shares_held",
+        "  FROM mp_portfolio_federated.dbo.equity_holdings WHERE instrument_type = 'Equity'",
+        "),",
+        "fundamentals AS (",
+        "  SELECT a.ticker_region, c.FF_NET_INCOME AS net_income, c.FF_EPS_BASIC AS current_eps,",
+        "         ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct,",
+        "         ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity_ratio",
+        "  FROM mp_factset_data.sym_v1.sym_ticker_region a",
+        "  JOIN mp_factset_data.ff_v3.ff_sec_map         b ON a.fsym_id = b.fsym_id",
+        "  JOIN mp_factset_data.ff_v3.ff_basic_af        c ON b.fsym_company_id = c.fsym_id",
+        "  WHERE c.DATE >= '2023-01-01' AND c.FF_EPS_BASIC IS NOT NULL AND ABS(c.FF_EPS_BASIC) < 50 AND c.FF_SALES > 0",
+        "  QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1",
+        "),",
+        "estimates AS (",
+        "  SELECT a.ticker_region, c.FE_MEAN AS forward_eps",
+        "  FROM mp_factset_data.sym_v1.sym_ticker_region a",
+        "  JOIN mp_factset_data.fe_v4.fe_sec_map         b ON a.fsym_id = b.fsym_id",
+        "  JOIN mp_factset_data.fe_v4.fe_basic_conh_af   c ON b.fsym_company_id = c.fsym_id",
+        "  WHERE c.FE_ITEM = 'EPS' AND c.CONS_END_DATE IS NULL AND c.FE_FP_END >= CURRENT_DATE() AND ABS(c.FE_MEAN) < 50",
+        "  QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1",
+        ")",
+        "SELECT CASE",
+        "         WHEN f.net_income < 0 OR f.debt_to_equity_ratio > 2.5 THEN 'High Risk'",
+        "         WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) < -0.15 OR f.profit_margin_pct < 3 THEN 'Medium Risk'",
+        "         ELSE 'Low Risk'",
+        "       END AS risk_category,",
+        "       COUNT(*) AS num_stocks,",
+        "       ROUND(SUM(p.shares_held * f.current_eps), 2) AS total_earnings",
+        "FROM portfolio p JOIN fundamentals f ON p.ticker_region = f.ticker_region",
+        "LEFT JOIN estimates e ON p.ticker_region = e.ticker_region",
+        "GROUP BY risk_category",
+        "ORDER BY CASE risk_category WHEN 'High Risk' THEN 1 WHEN 'Medium Risk' THEN 2 ELSE 3 END"
+      ]
+    },
+    {
+      "name": "top_earnings",
+      "displayName": "Top Earners (no-ETL)",
+      "queryLines": [
+        "WITH portfolio AS (",
+        "  SELECT symbol, UPPER(symbol) AS ticker_region, number_of_shares AS shares_held",
+        "  FROM mp_portfolio_federated.dbo.equity_holdings WHERE instrument_type = 'Equity'",
+        "),",
+        "fundamentals AS (",
+        "  SELECT a.ticker_region, c.FF_EPS_BASIC AS current_eps",
+        "  FROM mp_factset_data.sym_v1.sym_ticker_region a",
+        "  JOIN mp_factset_data.ff_v3.ff_sec_map         b ON a.fsym_id = b.fsym_id",
+        "  JOIN mp_factset_data.ff_v3.ff_basic_af        c ON b.fsym_company_id = c.fsym_id",
+        "  WHERE c.DATE >= '2023-01-01' AND c.FF_EPS_BASIC IS NOT NULL AND ABS(c.FF_EPS_BASIC) < 50 AND c.FF_SALES > 0",
+        "  QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) = 1",
+        "),",
+        "estimates AS (",
+        "  SELECT a.ticker_region, c.FE_MEAN AS forward_eps",
+        "  FROM mp_factset_data.sym_v1.sym_ticker_region a",
+        "  JOIN mp_factset_data.fe_v4.fe_sec_map         b ON a.fsym_id = b.fsym_id",
+        "  JOIN mp_factset_data.fe_v4.fe_basic_conh_af   c ON b.fsym_company_id = c.fsym_id",
+        "  WHERE c.FE_ITEM = 'EPS' AND c.CONS_END_DATE IS NULL AND c.FE_FP_END >= CURRENT_DATE() AND ABS(c.FE_MEAN) < 50",
+        "  QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) = 1",
+        ")",
+        "SELECT p.symbol,",
+        "       ROUND(p.shares_held * f.current_eps, 2) AS current_earnings,",
+        "       ROUND(p.shares_held * e.forward_eps, 2) AS projected_earnings",
+        "FROM portfolio p JOIN fundamentals f ON p.ticker_region = f.ticker_region",
+        "LEFT JOIN estimates e ON p.ticker_region = e.ticker_region",
+        "WHERE p.shares_held * f.current_eps IS NOT NULL",
+        "ORDER BY current_earnings DESC",
+        "LIMIT 10"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Overview",
+      "layout": [
+        {
+          "widget": {
+            "name": "title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## no-ETL - Personal Investment Portfolio",
+                "Every widget queries the on-prem SQL Server (via Lakehouse Federation) and FactSet (via Marketplace) live. No workflow, no views, no persisted objects."
+              ]
+            }
+          },
+          "position": {"x": 0, "y": 0, "width": 6, "height": 2}
+        },
+        {
+          "widget": {
+            "name": "total-holdings",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "portfolio_summary",
+                  "fields": [{"name": "total_holdings", "expression": "`total_holdings`"}],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {"value": {"fieldName": "total_holdings", "displayName": "Holdings"}},
+              "frame": {"title": "Total Holdings", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "current-earnings",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "portfolio_summary",
+                  "fields": [{"name": "total_current_earnings", "expression": "`total_current_earnings`"}],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {"value": {"fieldName": "total_current_earnings", "displayName": "Current ($)"}},
+              "frame": {"title": "Current Annual Earnings", "showTitle": true}
+            }
+          },
+          "position": {"x": 2, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "projected-earnings",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "portfolio_summary",
+                  "fields": [{"name": "total_projected_earnings", "expression": "`total_projected_earnings`"}],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {"value": {"fieldName": "total_projected_earnings", "displayName": "Projected ($)"}},
+              "frame": {"title": "Projected Annual Earnings", "showTitle": true}
+            }
+          },
+          "position": {"x": 4, "y": 2, "width": 2, "height": 3}
+        },
+        {
+          "widget": {
+            "name": "risk-pie",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "risk_distribution",
+                  "fields": [
+                    {"name": "sum(num_stocks)", "expression": "SUM(`num_stocks`)"},
+                    {"name": "risk_category", "expression": "`risk_category`"}
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {"fieldName": "sum(num_stocks)", "scale": {"type": "quantitative"}},
+                "color": {"fieldName": "risk_category", "displayName": "Risk Level", "scale": {"type": "categorical"}}
+              },
+              "frame": {"title": "Risk Distribution", "showTitle": true}
+            }
+          },
+          "position": {"x": 0, "y": 5, "width": 3, "height": 6}
+        },
+        {
+          "widget": {
+            "name": "top-earners-bar",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_earnings",
+                  "fields": [
+                    {"name": "symbol", "expression": "`symbol`"},
+                    {"name": "current_earnings", "expression": "`current_earnings`"},
+                    {"name": "projected_earnings", "expression": "`projected_earnings`"}
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {"fieldName": "symbol", "scale": {"type": "categorical"}, "displayName": "Stock"},
+                "y": {
+                  "scale": {"type": "quantitative"},
+                  "fields": [
+                    {"fieldName": "current_earnings", "displayName": "Current ($)"},
+                    {"fieldName": "projected_earnings", "displayName": "Projected ($)"}
+                  ]
+                }
+              },
+              "mark": {"layout": "group"},
+              "frame": {"title": "Top 10 Earners — Current vs Projected", "showTitle": true}
+            }
+          },
+          "position": {"x": 3, "y": 5, "width": 3, "height": 6}
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {"widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"},
+    "applyModeEnabled": false
+  }
+}
