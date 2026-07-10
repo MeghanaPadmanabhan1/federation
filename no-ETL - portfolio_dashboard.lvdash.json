@@ -34,6 +34,13 @@
       "queryLines": [
         "SELECT p.symbol, p.shares_held, ROUND(p.shares_held * f.current_eps, 2) AS current_earnings, ROUND(p.shares_held * e.forward_eps, 2) AS projected_earnings, ROUND(((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) * 100, 2) AS projected_eps_growth_pct, f.profit_margin_pct, f.debt_to_equity_ratio, CASE WHEN f.net_income < 0 OR f.debt_to_equity_ratio > 2.5 THEN 'High Risk' WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) < -0.15 OR f.profit_margin_pct < 3 THEN 'Medium Risk' ELSE 'Low Risk' END AS risk_assessment, CASE WHEN f.net_income < 0 THEN 'Sell' WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) < -0.15 THEN 'Sell' WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.20 THEN 'Strong Buy' WHEN ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.05 THEN 'Buy' ELSE 'Hold' END AS action_recommendation FROM ( SELECT symbol, UPPER(symbol) AS ticker_region, number_of_shares AS shares_held FROM mp_portfolio_federated.dbo.equity_holdings WHERE instrument_type = 'Equity' ) p JOIN ( SELECT a.ticker_region, c.FF_NET_INCOME AS net_income, c.FF_EPS_BASIC AS current_eps, ROUND(c.FF_NET_INCOME / NULLIF(c.FF_SALES, 0) * 100, 2) AS profit_margin_pct, ROUND((c.FF_DEBT_ST + c.FF_DEBT_LT) / NULLIF(c.FF_COM_EQ, 0), 2) AS debt_to_equity_ratio, ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) AS rn FROM mp_factset_data.sym_v1.sym_ticker_region a JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id WHERE c.DATE >= '2023-01-01' AND c.FF_EPS_BASIC IS NOT NULL AND ABS(c.FF_EPS_BASIC) < 50 AND c.FF_SALES > 0 ) f ON p.ticker_region = f.ticker_region AND f.rn = 1 LEFT JOIN ( SELECT a.ticker_region, c.FE_MEAN AS forward_eps, c.FE_NUM_EST AS analyst_count, ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) AS rn FROM mp_factset_data.sym_v1.sym_ticker_region a JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id WHERE c.FE_ITEM = 'EPS' AND c.CONS_END_DATE IS NULL AND c.FE_FP_END >= CURRENT_DATE() AND ABS(c.FE_MEAN) < 50 ) e ON p.ticker_region = e.ticker_region AND e.rn = 1 ORDER BY current_earnings DESC"
       ]
+    },
+    {
+      "name": "top_strong_buys",
+      "displayName": "Top Strong Buys (no-ETL)",
+      "queryLines": [
+        "SELECT p.symbol, ROUND(((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) * 100, 2) AS projected_growth_pct, ROUND(p.shares_held * e.forward_eps, 2) AS projected_earnings FROM ( SELECT symbol, UPPER(symbol) AS ticker_region, number_of_shares AS shares_held FROM mp_portfolio_federated.dbo.equity_holdings WHERE instrument_type = 'Equity' ) p JOIN ( SELECT a.ticker_region, c.FF_NET_INCOME AS net_income, c.FF_EPS_BASIC AS current_eps, ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.DATE DESC) AS rn FROM mp_factset_data.sym_v1.sym_ticker_region a JOIN mp_factset_data.ff_v3.ff_sec_map b ON a.fsym_id = b.fsym_id JOIN mp_factset_data.ff_v3.ff_basic_af c ON b.fsym_company_id = c.fsym_id WHERE c.DATE >= '2023-01-01' AND c.FF_EPS_BASIC IS NOT NULL AND ABS(c.FF_EPS_BASIC) < 50 AND c.FF_SALES > 0 ) f ON p.ticker_region = f.ticker_region AND f.rn = 1 JOIN ( SELECT a.ticker_region, c.FE_MEAN AS forward_eps, ROW_NUMBER() OVER (PARTITION BY a.ticker_region ORDER BY c.FE_FP_END) AS rn FROM mp_factset_data.sym_v1.sym_ticker_region a JOIN mp_factset_data.fe_v4.fe_sec_map b ON a.fsym_id = b.fsym_id JOIN mp_factset_data.fe_v4.fe_basic_conh_af c ON b.fsym_company_id = c.fsym_id WHERE c.FE_ITEM = 'EPS' AND c.CONS_END_DATE IS NULL AND c.FE_FP_END >= CURRENT_DATE() AND ABS(c.FE_MEAN) < 50 ) e ON p.ticker_region = e.ticker_region AND e.rn = 1 WHERE f.net_income >= 0 AND ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) > 0.20 QUALIFY ROW_NUMBER() OVER (PARTITION BY p.symbol ORDER BY ((e.forward_eps - f.current_eps) / NULLIF(f.current_eps, 0)) DESC) = 1 ORDER BY projected_growth_pct DESC LIMIT 10"
+      ]
     }
   ],
   "pages": [
@@ -326,6 +333,64 @@
         },
         {
           "widget": {
+            "name": "top-strong-buys",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "top_strong_buys",
+                  "fields": [
+                    {
+                      "name": "symbol",
+                      "expression": "`symbol`"
+                    },
+                    {
+                      "name": "projected_growth_pct",
+                      "expression": "`projected_growth_pct`"
+                    },
+                    {
+                      "name": "projected_earnings",
+                      "expression": "`projected_earnings`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "symbol",
+                    "displayName": "Symbol"
+                  },
+                  {
+                    "fieldName": "projected_growth_pct",
+                    "displayName": "Growth %"
+                  },
+                  {
+                    "fieldName": "projected_earnings",
+                    "displayName": "Projected $"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Top Strong Buy Symbols",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 10,
+            "width": 2,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
             "name": "top-earners-bar",
             "queries": [
               {
@@ -388,7 +453,7 @@
           },
           "position": {
             "x": 0,
-            "y": 10,
+            "y": 15,
             "width": 6,
             "height": 6
           }
@@ -494,7 +559,7 @@
           },
           "position": {
             "x": 0,
-            "y": 16,
+            "y": 21,
             "width": 6,
             "height": 12
           }
